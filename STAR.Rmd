@@ -1,0 +1,283 @@
+---
+title: "Sensitivity analysis when transporting a causal effect: STAR"
+author:
+  - Bénédicte Colnet^[Inria, benedicte.colnet@inria.fr]
+date: "March 2021"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+abstract: | 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+# Set random generator seed for reproducible results
+set.seed(123)
+
+# Libraries
+library(ggplot2) # plots
+library(tidyverse)
+library(lubridate) # date management
+
+# Load methods from estimators.R 
+source("./estimators.R")
+```
+
+```{r}
+star <- read.csv("./STAR_data.csv")
+star$g1tchid <- as.factor(star$g1tchid)
+```
+
+Similar pre-treatment as Kallus & Shalit.
+
+```{r}
+star$Y = star$g1tlistss + star$g1treadss + star$g1tmathss
+star$Y <- star$Y/3
+star <- star %>% drop_na("Y")
+star <- star %>% drop_na("g1classtype")
+star <- star[star$g1classtype != 3,]
+star$g1classtype <- ifelse(star$g1classtype == 2, 0, 1)
+Kallus_X <- c("gender", "race", "birthmonth", "birthday", "birthyear", "gkfreelunch", "g1tchid", "g1freelunch", "g1surban")
+star <- star %>% mutate_at(Kallus_X, ~replace_na(., 0))
+```
+
+
+Sanity checks.
+
+```{r}
+assertthat::are_equal(nrow(star[star$g1classtype == 0,]), 2413)
+assertthat::are_equal(nrow(star[star$g1classtype == 1,]), 1805)
+assertthat::are_equal(nrow(star), 4218)
+assertthat::are_equal(mean(star$y), 540.0987829935199)
+N = nrow(star)
+
+ggplot(star, aes(x = Y, color = as.factor(g1classtype))) +
+  geom_histogram(bins = 50, fill = "white") +
+  facet_grid(~g1classtype) +
+  theme_bw()
+```
+
+Treat age column considering the STAR study started in 1985.
+
+```{r}
+star$date <- paste(star$birthmonth, star$birthday, star$birthyear, sep = "-")
+star$date  <- mdy(star$date)
+star$age <- interval(star$date, "1985-01-01") %/% months(1)
+```
+
+Adapt column names
+```{r}
+names(star)[names(star) == "g1classtype"] <- "A"
+```
+
+
+```{r}
+X <- c("gender", "race", "age", "gkfreelunch", "g1tchid", "g1freelunch", "g1surban")
+covariates <- c(X, "A", "Y")
+star <- star[, covariates]
+```
+
+```{r}
+# Filter treatment / control observations, pulls outcome variable as a vector
+y_treated <- star[star$A == 1, "Y"] 
+y_control <- star[star$A == 0, "Y"] 
+  
+n_treated <- nrow(star[star$A == 1,]) 
+n_control <- nrow(star[star$A == 0,]) 
+  
+# Difference in means
+estimated_difference <- mean(y_treated) - mean(y_control)
+  
+# 95% Confidence intervals
+se_hat <- sqrt(var(y_treated)/(n_treated-1) + var(y_control)/(n_control-1) )
+lower_ci <- estimated_difference - 1.96 * se_hat
+upper_ci <- estimated_difference + 1.96 * se_hat
+  
+GROUND_TRUTH = c(Difference = estimated_difference, lower_ci = lower_ci, upper_ci = upper_ci)
+GROUND_TRUTH
+```
+
+On the total population, the average treatment effect is positive. 
+
+We create the RWE study by simply generating a subsample.
+
+```{r}
+RWE_index <- sample(1:N, 500, replace = FALSE)
+not_RWE_index <- setdiff(1:N, RWE_index)
+RWE <- star[RWE_index,]
+star <- star[not_RWE_index,]
+
+assertthat::are_equal(nrow(star)+nrow(RWE), N)
+
+# control that the sample is a rather good estimate
+t.test(RWE[RWE$A == 1, "Y"], RWE[RWE$A == 0, "Y"])
+```
+
+We create a biased sample for the RCT with about 10% of the total population that is selected.
+
+```{r}
+class <- star %>% 
+  group_by(g1tchid) %>%
+  summarise(mean_g1surban = mean(g1surban), mean_race = mean(race), mean_lunch = mean(g1freelunch))
+
+etas <- as.vector(as.matrix(class[, c("mean_g1surban", "mean_race", "mean_lunch")]) %*% c(-1, 0, 0)) + 0.5
+ps = 1 / (1 + exp(-etas)) # P(S = 1 | X)
+RCT_indicator <- rbinom(length(ps), 1, as.vector(ps))
+class$S <- RCT_indicator
+class$S <- ifelse(is.na(class$S), 0, class$S)
+star <- merge(star, class[, c("S", "g1tchid")], by = "g1tchid")
+RCT <- star[star$S == 1,]
+```
+
+```{r}
+ggplot(RCT, aes(x = race)) +
+  geom_bar()
+
+ggplot(RWE, aes(x = race)) +
+  geom_bar()
+
+
+ggplot(RCT, aes(x = g1freelunch)) +
+  geom_bar()
+
+ggplot(RWE, aes(x = g1freelunch)) +
+  geom_bar()
+
+
+ggplot(RCT, aes(x = g1surban)) +
+  geom_bar()
+
+ggplot(RWE, aes(x = g1surban)) +
+  geom_bar()
+
+```
+
+```{r}
+star <- rbind(RCT, RWE)
+```
+
+
+```{r}
+# Filter treatment / control observations, pulls outcome variable as a vector
+y_treated_RCT <- RCT[RCT$A == 1, "Y"] 
+y_control_RCT <- RCT[RCT$A == 0, "Y"] 
+  
+n_treated_RCT <- nrow(RCT[RCT$A == 1,]) 
+n_control_RCT <- nrow(RCT[RCT$A == 0,]) 
+  
+# Difference in means
+estimated_difference <- mean(y_treated_RCT) - mean(y_control_RCT)
+  
+# 95% Confidence intervals
+se_hat <- sqrt(var(y_treated_RCT)/(n_treated_RCT-1) + var(y_control_RCT)/(n_control_RCT-1) )
+lower_ci <- estimated_difference - 1.96 * se_hat
+upper_ci <- estimated_difference + 1.96 * se_hat
+  
+TAU1 = c(Difference = estimated_difference, lower_ci = lower_ci, upper_ci = upper_ci)
+TAU1
+```
+
+The RCT created is totally biased (and noisy..).
+
+```{r}
+# library(FactoMineR)
+# res = catdes(star[,c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban","A")], num.var=6, proba=0.05)
+# plot(res)
+# 
+# res = catdes(RCT[,c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban","A")], num.var=6, proba=0.05)
+# plot(res)
+```
+
+
+```{r}
+GROUND_TRUTH
+compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
+compute_gformula(star[, c("gender", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
+```
+
+```{r}
+sensitivity_parameter_nguyen = seq(2, 2.6, by = 0.1) # represents the guess on E[U] in target pop.
+results_nguyen_obs_data <- data.frame("sensitivity_parameter" = c(),
+                                      "Target_ATE" = c())
+variables = c("gender", "race", "g1freelunch", "gkfreelunch")
+missing_covariate = "g1surban"
+
+# estimate CATE
+mu_1 <- lm(Y~gender+race+g1freelunch+gkfreelunch+g1surban, data = star[star$S == 1 & star$A == 1,])
+mu_0 <- lm(Y~gender+race+g1freelunch+gkfreelunch+g1surban, data = star[star$S == 1 & star$A == 0,])
+    
+# extract coefficient
+deltas = (mu_1$coefficients - mu_0$coefficients)
+    
+# apply sensitivity method
+RWE <- star[star$S == 0,]
+
+for (mean_sens in sensitivity_parameter_nguyen){
+  ate <- deltas[variables] %*%  as.matrix(colMeans(RWE[,variables]))  +  deltas["(Intercept)"] + deltas[missing_covariate]*mean_sens
+  new_result <- data.frame("sensitivity_parameter" = mean_sens, "Target_ATE" = ate)
+    
+  results_nguyen_obs_data <- rbind(results_nguyen_obs_data, new_result)
+}
+results_nguyen_obs_data
+```
+
+```{r}
+cor(star[star$S == 1, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")])
+cor(star[star$S == 0, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")])
+```
+True sensitivity parameters
+
+```{r}
+true_shift = mean(star[star$S == 0, missing_covariate]) - mean(star[star$S == 1, missing_covariate])
+```
+
+
+```{r}
+library(matlib) # inverse of a matrix
+# initialization parameters for the heat map
+shifts <- seq(0.5, 1.5, by = 0.05)
+deltas <- seq(5, 20, by = 1) 
+
+# generate a data set
+empirical_sigma = cor(star[star$S == 0, c(variables, missing_covariate)])
+
+heatmap_data <- as.data.frame(expand.grid(shifts, deltas))
+names(heatmap_data) <- c("shift", "delta")
+  
+# compute necessary information from observational data (complete data set)
+sigma_mis_obs = empirical_sigma[5, 1:4]
+sigma_obs_obs = empirical_sigma[1:4, 1:4]
+delta_obs <- colMeans(star[star$S == 0, variables]) - colMeans(star[star$S == 1, variables])
+heatmap_data$bias = heatmap_data$delta*(heatmap_data$shift - sigma_mis_obs %*% inv(sigma_obs_obs) %*% delta_obs)
+
+
+ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
+  # stat_contour() +
+  theme_classic() + 
+  geom_contour_filled() 
+# +
+#   stat_contour(breaks = tau_hat_gformula - tau_hat_dm) +
+#   geom_point(data = other_covariates,
+#              aes(x = shift,
+#                  y = delta, label = variable),
+#                  shape = 3) +
+#   geom_label_repel(data = other_covariates, aes(x = shift, y = delta, label = variable)) +
+#   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
+# xlab(expression(Shift~paste("(",Delta[u],")"))) +
+#   ylab(expression(Influence~on~Y~paste("(",delta[u],")"))) +
+#   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=15)) +
+#   guides(fill = guide_legend(title.position = "right",direction = "vertical",
+#                                title.theme = element_text(angle = 90, size = 12, colour = "black"),
+#                                barheight = .5, barwidth = .95,
+#                                title.hjust = 0.5, raster = FALSE,
+#                                title = expression(Bias~" "~tau-hat(tau)[g])))
+```
+
+
+
