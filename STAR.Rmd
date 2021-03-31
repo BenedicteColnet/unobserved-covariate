@@ -15,15 +15,12 @@ abstract: |
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
-
 # Set random generator seed for reproducible results
 set.seed(123)
-
 # Libraries
 library(ggplot2) # plots
 library(tidyverse)
 library(lubridate) # date management
-
 # Load methods from estimators.R 
 source("./estimators.R")
 ```
@@ -53,9 +50,8 @@ Sanity checks.
 assertthat::are_equal(nrow(star[star$g1classtype == 0,]), 2413)
 assertthat::are_equal(nrow(star[star$g1classtype == 1,]), 1805)
 assertthat::are_equal(nrow(star), 4218)
-assertthat::are_equal(mean(star$y), 540.0987829935199)
+assertthat::are_equal(mean(star$Y), 540.0987829935199)
 N = nrow(star)
-
 ggplot(star, aes(x = Y, color = as.factor(g1classtype))) +
   geom_histogram(bins = 50, fill = "white") +
   facet_grid(~g1classtype) +
@@ -98,7 +94,7 @@ se_hat <- sqrt(var(y_treated)/(n_treated-1) + var(y_control)/(n_control-1) )
 lower_ci <- estimated_difference - 1.96 * se_hat
 upper_ci <- estimated_difference + 1.96 * se_hat
   
-GROUND_TRUTH = c(Difference = estimated_difference, lower_ci = lower_ci, upper_ci = upper_ci)
+GROUND_TRUTH = c(Difference = estimated_difference, CI_inf = lower_ci, CI_sup = upper_ci)
 GROUND_TRUTH
 ```
 
@@ -116,6 +112,8 @@ assertthat::are_equal(nrow(star)+nrow(RWE), N)
 
 # control that the sample is a rather good estimate
 t.test(RWE[RWE$A == 1, "Y"], RWE[RWE$A == 0, "Y"])
+
+RWE$S <- rep(0, nrow(RWE))
 ```
 
 We create a biased sample for the RCT with about 10% of the total population that is selected.
@@ -124,7 +122,6 @@ We create a biased sample for the RCT with about 10% of the total population tha
 class <- star %>% 
   group_by(g1tchid) %>%
   summarise(mean_g1surban = mean(g1surban), mean_race = mean(race), mean_lunch = mean(g1freelunch))
-
 etas <- as.vector(as.matrix(class[, c("mean_g1surban", "mean_race", "mean_lunch")]) %*% c(-1, 0, 0)) + 0.5
 ps = 1 / (1 + exp(-etas)) # P(S = 1 | X)
 RCT_indicator <- rbinom(length(ps), 1, as.vector(ps))
@@ -137,24 +134,16 @@ RCT <- star[star$S == 1,]
 ```{r}
 ggplot(RCT, aes(x = race)) +
   geom_bar()
-
 ggplot(RWE, aes(x = race)) +
   geom_bar()
-
-
 ggplot(RCT, aes(x = g1freelunch)) +
   geom_bar()
-
 ggplot(RWE, aes(x = g1freelunch)) +
   geom_bar()
-
-
 ggplot(RCT, aes(x = g1surban)) +
   geom_bar()
-
 ggplot(RWE, aes(x = g1surban)) +
   geom_bar()
-
 ```
 
 ```{r}
@@ -178,35 +167,109 @@ se_hat <- sqrt(var(y_treated_RCT)/(n_treated_RCT-1) + var(y_control_RCT)/(n_cont
 lower_ci <- estimated_difference - 1.96 * se_hat
 upper_ci <- estimated_difference + 1.96 * se_hat
   
-TAU1 = c(Difference = estimated_difference, lower_ci = lower_ci, upper_ci = upper_ci)
+TAU1 = c(Difference = estimated_difference, CI_inf = lower_ci, CI_sup = upper_ci)
 TAU1
 ```
 
-The RCT created is totally biased (and noisy..).
 
 ```{r}
-# library(FactoMineR)
-# res = catdes(star[,c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban","A")], num.var=6, proba=0.05)
-# plot(res)
-# 
-# res = catdes(RCT[,c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban","A")], num.var=6, proba=0.05)
-# plot(res)
+library(boot) # Import library for bootstrap methods 
+nboot <- 100 # number of bootstrap samples to be used for confidence intervals
+```
+
+The confidence intervals are estimated via non-parametric stratified bootstrap.
+
+```{r, echo=T}
+stratified_bootstrap <- function(DF, nboot=100){
+  
+  estimands <- c()
+  
+  for (i in 1:nboot){
+  
+    # random resamples from RCT
+    n = nrow(DF[DF$S == 1,])
+    index_RCT = sample(1:n, n, replace = TRUE)
+    
+    # random resamples from RWD
+    m = nrow(DF[DF$S == 0,])
+    index_RWD = sample(1:m, m, replace = TRUE)
+    
+    # new data set
+    RCT_RWD <- rbind(DF[which(DF$S==1),][index_RCT,],
+                     DF[which(DF$S==0),][index_RWD,])
+    # estimation
+    estimands <- c(estimands, compute_gformula(RCT_RWD))
+  }
+  return(estimands)
+}
+
+ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+bootstrap_sorted <- sort(bootstrap)
+CI_inf <- quantile(bootstrap_sorted, 0.025)
+CI_sup <- quantile(bootstrap_sorted, 0.975)
+GENERALIZED_ATE_all_cov = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
+GENERALIZED_ATE_all_cov
+
+ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch",  "S", "Y", "A")])
+bootstrap_sorted <- sort(bootstrap)
+CI_inf <- quantile(bootstrap_sorted, 0.025)
+CI_sup <- quantile(bootstrap_sorted, 0.975)
+GENERALIZED_ATE_miss_g1surban = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
+GENERALIZED_ATE_miss_g1surban
+
+
+ate <- compute_gformula(star[, c("gender", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "S", "Y", "A")])
+bootstrap_sorted <- sort(bootstrap)
+CI_inf <- quantile(bootstrap_sorted, 0.025)
+CI_sup <- quantile(bootstrap_sorted, 0.975)
+GENERALIZED_ATE_only_gender = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
+GENERALIZED_ATE_only_gender
+
+```
+
+```{r}
+results <- rbind(GROUND_TRUTH, TAU1, GENERALIZED_ATE_all_cov, GENERALIZED_ATE_miss_g1surban)
+results <- data.frame(names = row.names(results), results)
+results$names <- factor(results$names,
+                        levels = c("GROUND_TRUTH", "TAU1", "GENERALIZED_ATE_all_cov", "GENERALIZED_ATE_miss_g1surban"))
 ```
 
 
 ```{r}
-GROUND_TRUTH
-compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
-compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
-compute_gformula(star[, c("gender", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
+results$names_recoded = recode(results$names,
+                                       "GROUND_TRUTH"="STAR RCT",
+                                       "TAU1"="Biaised RCT",
+                                       "GENERALIZED_ATE_all_cov"="Generalized ATE \n (all covariates)",
+                               "GENERALIZED_ATE_miss_g1surban"= "Generalized ATE \n (without g1surban)")
+
+ggplot(results, aes(x=names_recoded, y=Difference)) + 
+  geom_point(size = 2)+
+  geom_errorbar(aes(ymin=CI_inf, ymax=CI_sup), width=.2,
+                 position=position_dodge(0.05)) +
+  geom_hline(yintercept = GROUND_TRUTH["Difference"], linetype = "dashed", color = "red") + 
+  coord_flip() +
+  theme_bw() +
+  xlab("") +
+  ylab("Estimated ATE") +
+  theme(text = element_text(size=15)) +
+  ggsave("./figures/bilan_star.pdf", width = 4, height = 4)
 ```
 
+
 ```{r}
-sensitivity_parameter_nguyen = seq(2, 2.6, by = 0.1) # represents the guess on E[U] in target pop.
-results_nguyen_obs_data <- data.frame("sensitivity_parameter" = c(),
-                                      "Target_ATE" = c())
 variables = c("gender", "race", "g1freelunch", "gkfreelunch")
 missing_covariate = "g1surban"
+mean(star[star$S == 0, missing_covariate])
+```
+
+```{r}
+sensitivity_parameter_nguyen = seq(2.1, 2.7, by = 0.1) # represents the guess on E[U] in target pop.
+results_nguyen_obs_data <- data.frame("sensitivity_parameter" = c(),
+                                      "Target_ATE" = c())
+
 
 # estimate CATE
 mu_1 <- lm(Y~gender+race+g1freelunch+gkfreelunch+g1surban, data = star[star$S == 1 & star$A == 1,])
@@ -231,18 +294,20 @@ results_nguyen_obs_data
 cor(star[star$S == 1, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")])
 cor(star[star$S == 0, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")])
 ```
-True sensitivity parameters
 
 ```{r}
-true_shift = mean(star[star$S == 0, missing_covariate]) - mean(star[star$S == 1, missing_covariate])
+true_shift <- mean(star[star$S == 0, missing_covariate] - star[star$S == 1, missing_covariate])
+
+true_delta <- mu_1$coefficients["g1surban"] - mu_0$coefficients["g1surban"]
 ```
+
 
 
 ```{r}
 library(matlib) # inverse of a matrix
 # initialization parameters for the heat map
-shifts <- seq(0.5, 1.5, by = 0.05)
-deltas <- seq(5, 20, by = 1) 
+shifts <- seq(0, 1, by = 0.05)
+deltas <- seq(-15, 17, by = 1) 
 
 # generate a data set
 empirical_sigma = cor(star[star$S == 0, c(variables, missing_covariate)])
@@ -260,23 +325,19 @@ heatmap_data$bias = heatmap_data$delta*(heatmap_data$shift - sigma_mis_obs %*% i
 ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
   # stat_contour() +
   theme_classic() + 
-  geom_contour_filled() 
-# +
-#   stat_contour(breaks = tau_hat_gformula - tau_hat_dm) +
-#   geom_point(data = other_covariates,
-#              aes(x = shift,
-#                  y = delta, label = variable),
-#                  shape = 3) +
-#   geom_label_repel(data = other_covariates, aes(x = shift, y = delta, label = variable)) +
-#   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-# xlab(expression(Shift~paste("(",Delta[u],")"))) +
-#   ylab(expression(Influence~on~Y~paste("(",delta[u],")"))) +
-#   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=15)) +
-#   guides(fill = guide_legend(title.position = "right",direction = "vertical",
-#                                title.theme = element_text(angle = 90, size = 12, colour = "black"),
-#                                barheight = .5, barwidth = .95,
-#                                title.hjust = 0.5, raster = FALSE,
-#                                title = expression(Bias~" "~tau-hat(tau)[g])))
+  geom_contour_filled() +
+  geom_point(x = true_shift,
+                 y = true_delta,
+                 size = 3, shape = 3) +
+  geom_hline(yintercept = true_delta, linetype = "dashed") +
+  geom_vline(xintercept = true_shift, linetype = "dashed") +
+   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
+ xlab(expression(Shift~paste("(",Delta[u],")"))) +
+    ylab(expression(delta[u])) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=15)) +
+   guides(fill = guide_legend(title.position = "right",direction = "vertical",
+                               title.theme = element_text(angle = 90, size = 12, colour = "black"), barheight = .5, barwidth = .95, title.hjust = 0.5, raster = FALSE, title = expression(Bias~" "~tau-hat(tau)[g]))) +
+  ggsave("./figures/star-heatmap.pdf")
 ```
 
 
