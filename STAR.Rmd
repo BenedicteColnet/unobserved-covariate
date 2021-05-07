@@ -2,7 +2,7 @@
 title: "Sensitivity analysis when transporting a causal effect: STAR"
 author:
   - Bénédicte Colnet^[Inria, benedicte.colnet@inria.fr]
-date: "March 2021"
+date: "April 2021"
 output:
   pdf_document:
     toc: yes
@@ -10,7 +10,7 @@ output:
     number_sections: no
     toc: yes
     toc_depth: 2
-abstract: | 
+abstract: "This notebook performs the semi-synthetic data analysis of the paper *Generalizing a causal effect:  sensitivity analysis and missing covariates*" 
 ---
 
 ```{r setup, include=FALSE}
@@ -21,6 +21,8 @@ set.seed(123)
 library(ggplot2) # plots
 library(tidyverse)
 library(lubridate) # date management
+library(grf)
+
 # Load methods from estimators.R 
 source("./estimators.R")
 ```
@@ -30,7 +32,7 @@ star <- read.csv("./STAR_data.csv")
 star$g1tchid <- as.factor(star$g1tchid)
 ```
 
-Similar pre-treatment as Kallus & Shalit.
+Similar pre-treatment as Kallus & Shalit, 2018
 
 ```{r}
 star$Y = star$g1tlistss + star$g1treadss + star$g1tmathss
@@ -74,9 +76,12 @@ names(star)[names(star) == "g1classtype"] <- "A"
 
 ```{r}
 X <- c("gender", "race", "age", "gkfreelunch", "g1tchid", "g1freelunch", "g1surban")
+X_without_g1surban <- c("gender", "race", "age", "gkfreelunch", "g1tchid", "g1freelunch")
 covariates <- c(X, "A", "Y")
 star <- star[, covariates]
+star$g1surban <- as.numeric(star$g1surban)
 ```
+
 
 ```{r}
 # Filter treatment / control observations, pulls outcome variable as a vector
@@ -172,15 +177,10 @@ TAU1
 ```
 
 
-```{r}
-library(boot) # Import library for bootstrap methods 
-nboot <- 100 # number of bootstrap samples to be used for confidence intervals
-```
-
 The confidence intervals are estimated via non-parametric stratified bootstrap.
 
 ```{r, echo=T}
-stratified_bootstrap <- function(DF, nboot=100){
+stratified_bootstrap <- function(DF, nboot = 50){
   
   estimands <- c()
   
@@ -198,12 +198,12 @@ stratified_bootstrap <- function(DF, nboot=100){
     RCT_RWD <- rbind(DF[which(DF$S==1),][index_RCT,],
                      DF[which(DF$S==0),][index_RWD,])
     # estimation
-    estimands <- c(estimands, compute_gformula(RCT_RWD))
+    estimands <- c(estimands, compute_gformula_with_Random_forest(RCT_RWD))
   }
   return(estimands)
 }
 
-ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+ate <- compute_gformula_with_Random_forest(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
 bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
@@ -211,7 +211,7 @@ CI_sup <- quantile(bootstrap_sorted, 0.975)
 GENERALIZED_ATE_all_cov = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
 GENERALIZED_ATE_all_cov
 
-ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
+ate <- compute_gformula_with_Random_forest(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
 bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch",  "S", "Y", "A")])
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
@@ -220,8 +220,8 @@ GENERALIZED_ATE_miss_g1surban = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI
 GENERALIZED_ATE_miss_g1surban
 
 
-ate <- compute_gformula(star[, c("gender", "S", "Y", "A")])
-bootstrap <- stratified_bootstrap(DF=star[, c("gender", "S", "Y", "A")])
+ate <- compute_gformula_with_Random_forest(star[, c("gender", "race", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "S", "Y", "A")])
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
@@ -254,10 +254,34 @@ ggplot(results, aes(x=names_recoded, y=Difference)) +
   theme_bw() +
   xlab("") +
   ylab("Estimated ATE") +
-  theme(text = element_text(size=15)) +
-  ggsave("./figures/bilan_star.pdf", width = 4, height = 4)
+  theme(text = element_text(size=13)) +
+  ggsave("./figures/bilan_star_with_random_forest.pdf", width = 4, height = 2.5)
 ```
 
+
+Is the bias close to the one expected in Lemma 4?
+
+
+```{r}
+library(matlib) # inverse of a matrix
+library(caret)
+library(rpart)
+
+delta_hat_oracle <- get_coefficients_with_Robinson_proc(data = star, covariate_names = c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban"), learning_m = "forest")
+
+Sigma_oracle <- cor(star[star$S == 1, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")])
+# Sigma_oracle = cor(star[star$S == 0, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")])
+
+# create variance-covariance matrix
+obs <- c("gender", "race", "g1freelunch", "gkfreelunch")
+Sigma_mis_obs <- Sigma_oracle["g1surban", obs]
+Sigma_obs_obs <- Sigma_oracle[obs, obs]
+     
+# compute bias according to lemma
+bias <- delta_hat_oracle["g1surban"] * ((mean(star[star$S == 0, "g1surban"]) - mean(star[star$S == 1, "g1surban"])) - Sigma_mis_obs%*% inv(Sigma_obs_obs)%*%(colMeans(star[star$S == 0, obs]) - colMeans(star[star$S == 1, obs])))
+
+bias
+```
 
 ```{r}
 variables = c("gender", "race", "g1freelunch", "gkfreelunch")
@@ -270,19 +294,14 @@ sensitivity_parameter_nguyen = seq(2.1, 2.7, by = 0.1) # represents the guess on
 results_nguyen_obs_data <- data.frame("sensitivity_parameter" = c(),
                                       "Target_ATE" = c())
 
-
-# estimate CATE
-mu_1 <- lm(Y~gender+race+g1freelunch+gkfreelunch+g1surban, data = star[star$S == 1 & star$A == 1,])
-mu_0 <- lm(Y~gender+race+g1freelunch+gkfreelunch+g1surban, data = star[star$S == 1 & star$A == 0,])
-    
 # extract coefficient
-deltas = (mu_1$coefficients - mu_0$coefficients)
+deltas = get_coefficients_with_Robinson_proc(star[star$S == 1,], learning_m = "linear", covariate_names = c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban"))
     
 # apply sensitivity method
 RWE <- star[star$S == 0,]
 
 for (mean_sens in sensitivity_parameter_nguyen){
-  ate <- deltas[variables] %*%  as.matrix(colMeans(RWE[,variables]))  +  deltas["(Intercept)"] + deltas[missing_covariate]*mean_sens
+  ate <- deltas[variables] %*%  as.matrix(colMeans(RWE[,variables])) + deltas[missing_covariate]*mean_sens
   new_result <- data.frame("sensitivity_parameter" = mean_sens, "Target_ATE" = ate)
     
   results_nguyen_obs_data <- rbind(results_nguyen_obs_data, new_result)
@@ -298,13 +317,12 @@ cor(star[star$S == 0, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surba
 ```{r}
 true_shift <- mean(star[star$S == 0, missing_covariate] - star[star$S == 1, missing_covariate])
 
-true_delta <- mu_1$coefficients["g1surban"] - mu_0$coefficients["g1surban"]
+true_delta <- deltas["g1surban"]
 ```
 
 
 
 ```{r}
-library(matlib) # inverse of a matrix
 # initialization parameters for the heat map
 shifts <- seq(0, 1, by = 0.05)
 deltas <- seq(-15, 17, by = 1) 
@@ -322,21 +340,26 @@ delta_obs <- colMeans(star[star$S == 0, variables]) - colMeans(star[star$S == 1,
 heatmap_data$bias = heatmap_data$delta*(heatmap_data$shift - sigma_mis_obs %*% inv(sigma_obs_obs) %*% delta_obs)
 
 
+BIAS = results[results$names == "GENERALIZED_ATE_all_cov", "Difference"] - results[results$names == "GENERALIZED_ATE_miss_g1surban", "Difference"]
+
+
 ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
-  # stat_contour() +
-  theme_classic() + 
   geom_contour_filled() +
+  #stat_contour(breaks = -BIAS, size = 0.5, color = "blue") +
+  theme_classic() + 
   geom_point(x = true_shift,
                  y = true_delta,
                  size = 3, shape = 3) +
-  geom_hline(yintercept = true_delta, linetype = "dashed") +
-  geom_vline(xintercept = true_shift, linetype = "dashed") +
+  geom_hline(yintercept = true_delta-3, linetype = "dashed") +
+  geom_hline(yintercept = true_delta+3, linetype = "dashed") +
+  geom_vline(xintercept = true_shift+0.1, linetype = "dashed") +
+  geom_vline(xintercept = true_shift-0.1, linetype = "dashed") +
    scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
- xlab(expression(Shift~paste("(",Delta[u],")"))) +
-    ylab(expression(delta[u])) +
-    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=15)) +
+ xlab(expression(Shift~paste("(",Delta[mis],")"))) +
+    ylab(expression(delta[mis])) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=20)) +
    guides(fill = guide_legend(title.position = "right",direction = "vertical",
-                               title.theme = element_text(angle = 90, size = 12, colour = "black"), barheight = .5, barwidth = .95, title.hjust = 0.5, raster = FALSE, title = expression(Bias~" "~tau-hat(tau)[g]))) +
+                               title.theme = element_text(angle = 90, size = 12, colour = "black"), barheight = .5, barwidth = .95, title.hjust = 0.5, raster = FALSE, title = expression(Bias~" "~tau-hat(tau)[G[obs]]))) +
   ggsave("./figures/star-heatmap.pdf")
 ```
 

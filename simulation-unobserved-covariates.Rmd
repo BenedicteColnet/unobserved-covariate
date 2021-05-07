@@ -2,7 +2,7 @@
 title: "Sensitivity analysis when transporting a causal effect: simulations"
 author:
   - Bénédicte Colnet^[Inria, benedicte.colnet@inria.fr]
-date: "March 2021"
+date: "April 2021"
 output:
   pdf_document:
     toc: yes
@@ -10,7 +10,7 @@ output:
     number_sections: no
     toc: yes
     toc_depth: 2
-abstract: | 
+abstract: "This notebook contains the simulation from Section 5 of the paper *Generalizing a causal effect:  sensitivity analysis and missing covariates*."
 ---
 
 ```{r setup, include=FALSE}
@@ -26,131 +26,28 @@ library(tidyverse) # tidy data
 library(matlib) # inverse of a matrix
 library(stringi) # for function stri_paste
 library(Rmisc) # summarySE
+library(caret)
+library(rpart)
+library(ggrepel) # austen plot
 
 # Load methods from estimators.R 
 source("./estimators.R")
+
+# Load parameters
+source("./parameters.R")
+
+# Function to generate the simulation
+source("./generate_simulation.R")
 ```
 
-# Preliminaries
+The simulation process can be found in the `generate_simulation.R` file, and parameters are in `parameters.R`.
 
-Small simulations to test the shift and treatment modifier dependence
-
-```{r}
-n = 100
-m = 1000
-x1 = runif(n, min = -1, max = 1)
-x2 = runif(n, min = -1, max = 1)
-rct <- data.frame("x1" = x1,
-                           "x2" = x2,
-                           "s" = rep(1, n))
-
-x1 = runif(m, min = 0, max = 1)
-x2 = runif(m, min = -1, max = 1)
-
-obs <- data.frame("x1" = x1,
-                  "x2" = x2,
-                  "s" = rep(0, m))
-toy_data_set <- rbind(rct, obs)
-
-toy_data_set$cate <- ifelse(toy_data_set$x1 < 0 | toy_data_set$x2 <0, 0, toy_data_set$x1)
-
-learned_cate_only_on_x1 <- lm(cate~x1, data = toy_data_set[toy_data_set$s == 1,])
-
-mean(toy_data_set[toy_data_set$s == 1, "cate"])
-mean(toy_data_set[toy_data_set$s == 0, "cate"])
-mean(predict(learned_cate_only_on_x1, newdata = toy_data_set[toy_data_set$s == 0,]))
-```
-# Linear causal model
+# Linear CATE
 
 ## Standard simulation
 
-```{r}
-# parameters
-P = 5
-SIGMA = matrix(c(1, 0, 0, 0, 0.8,
-                   0, 1, 0, 0, 0,
-                   0, 0, 1, 0, 0,
-                   0, 0, 0, 1, 0,
-                   0.8, 0, 0, 0, 1), nrow = 5, ncol = 5, byrow = TRUE)
-DELTA = c(30, 30, -10, 0, 0)
-BETA_s = c(-0.4, 0, -0.3, -0.3, 0) 
-BETA = c(5, 5, 5, 5, 5) # all covariates play on outcome
-```
+Shift can be visualized, for example strong shift for $X_1$, and no shift for $X_2$.
 
-
-```{r}
-# note that correlation is let as a parameters because useful for some simulations
-generate_simulation <- function(bs = BETA_s, beta = BETA, delta = DELTA, m = 10000, correlation = 0.8){
-
-  # covariates definition
-  p = length(bs)
-  X_names <- paste("X", 1:p, sep = "")
-  covariates_names <- c(X_names)
-  Sigma = matrix(c(1, 0, 0, 0, correlation,
-                   0, 1, 0, 0, 0,
-                   0, 0, 1, 0, 0,
-                   0, 0, 0, 1, 0,
-                   correlation, 0, 0, 0, 1), nrow = 5, ncol = 5, byrow = TRUE)
-   
-  mu = rep(1, p)
-    
-  # generate source population for RCT
-  source_data_for_RCT <- mvrnorm(n = m, mu = mu, Sigma = Sigma)  
-  source_data_for_RCT <- as.data.frame(source_data_for_RCT)
-  names(source_data_for_RCT) <- covariates_names
-    
-  # sample RCT
-  etas <- as.vector(as.matrix(source_data_for_RCT[, paste("X", 1:p, sep = "")]) %*% bs)
-  
-  # P(S = 1 | X) 
-  ps = 1 / (1 + exp(-etas))
-  source_data_for_RCT$ps <- ps
-  RCT_indicator <- rbinom(length(ps), 1, as.vector(ps))
-  source_data_for_RCT$S <- RCT_indicator
-    
-  # random treatment assignment within the RCT
-  source_data_for_RCT$A <- ifelse(source_data_for_RCT$S == 1, rbinom(nrow(source_data_for_RCT), 1, 0.5), NA)
-      
-  # keep only interesting variables
-  source_data_for_RCT <- source_data_for_RCT[, c(covariates_names, "A", "S")]
-      
-  # drop other data
-  RCT <- source_data_for_RCT[source_data_for_RCT$S == 1,]
-  rm(source_data_for_RCT)
-    
-  # generate target population
-  RWD <-  mvrnorm(n = m, mu = mu, Sigma = Sigma)
-  RWD <- as.data.frame(RWD)
-  names(RWD) <- covariates_names
-    
-  RWD$S <- rep(0, m)
-  RWD$A <- rep(NA, m)
-      
-  # stack RCT and RWE
-  DF <- rbind(RCT, RWD)
-      
-  # reset row number
-  rownames(DF) <- 1:nrow(DF)
-      
-  # generate outcome
-  error = rnorm(n = nrow(DF), mean = 0, sd = 0.2)
-  DF$Y = beta[1]*DF$X1 + 
-      beta[2]*DF$X2 + 
-      beta[3]*DF$X3 + 
-      beta[4]*DF$X4 + 
-      beta[5]*DF$X5 +
-      delta[1]*(DF$A == 1)*DF$X1 + 
-      delta[2]*(DF$A == 1)*DF$X2 + 
-      delta[3]*(DF$A == 1)*DF$X3 + 
-      delta[4]*(DF$A == 1)*DF$X4 + 
-      delta[5]*(DF$A == 1)*DF$X5 +
-      error   
-  return(DF)  
-}
-```
-
-
-Shift can be vizulized, for example strong shift for $X_1$, and no shift for $X_2$.
 ```{r}
 simulation <- generate_simulation()
 
@@ -181,19 +78,19 @@ ggplot(simulation, aes(x = X2)) +
 #                      "X5" = mean(RCT$X5))
 # TAU1 <- compute_mean_diff_RCT(simulation)
 
-expected_values_RCT <- c("X1" = 0.7310932,
+expected_values_RCT <- c("X1" = 0.7307824,
                      "X2" = 1,
-                     "X3" = 0.7984203,
-                     "X4" = 0.7989662,
-                     "X5" = 0.7852731)
+                     "X3" = 0.7992390,
+                     "X4" = 0.7977581,
+                     "X5" = 0.7843976)
 expected_values_RWE <- rep(1, P)
-TAU1 <- 43.98
-TRUE_ATE <- 50
+TAU1 <- 43.8849
 ```
+
 
 ## Bias observed depending on missing data pattern
 
-Computation of theoretical bias for all the missing covariate pattern according to the bias formula (g-formula).
+Computation of theoretical bias for all the missing covariate patterns according to Theorem 1.
 
 ```{r}
 # vectors to store our results
@@ -233,17 +130,16 @@ repetitions = 100
 estimate = c()
 method = c()
 without = c()
-variables = c("X1", "X2", "X3", "X4", "X5")
 columns = names(simulation)
-N <- c()
+model <- c()
 
 
-# several sample size for n+m can be tested
-for(sample_size in c(10000)){ 
+# several model for g can be chosen, such as linear, pmax, sin, log.
+for(model_for_g in c("linear")){ 
     for (i in 1:repetitions){
       
     # generate a simulation
-    simulation <- generate_simulation(m = sample_size)
+    simulation <- generate_simulation(model = model_for_g)
     
     # loop over various missing covariate patterns
     for (nb_mis in c(1,2,3)){ #3:p-2
@@ -272,23 +168,24 @@ for(sample_size in c(10000)){
                       
        method <- c(method, "Tau_DM", "IPSW", "G-formula", "AIPSW")
        without <- c(without, "none", "none", "none", "none")
-       N <- c(N, sample_size, sample_size, sample_size, sample_size)
+       model <- c(model, model_for_g, model_for_g, model_for_g, model_for_g)
     }
 }
 
 results_simple_simulations <- data.frame("Estimate" = estimate,
                                          "Method" = method,
                                          "without" = without,
-                                         "N" = N)
+                                         "model" = model)
 ```
 
 Comparison of empirical results and the theoretical bias.
 
 ```{r}
-ggplot(results_simple_simulations[results_simple_simulations$Method == "G-formula",], aes(x = without, y = Estimate)) +
+ggplot(results_simple_simulations[results_simple_simulations$Method == "G-formula" | results_simple_simulations$Method == "IPSW",], aes(x = without, y = Estimate)) +
   geom_boxplot() +
-  geom_point(data = theoretical_bias_result, aes(x = without, y = TRUE_ATE - Bias, color = "Theorical bias"), size = 2, shape = 16) +
+  geom_point(data = theoretical_bias_result, aes(x = without, y = TRUE_ATE - Bias, color = "Theorical bias"), size = 4, shape = 16) +
   theme_bw() +
+  facet_wrap(~ Method, nrow = 2) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
   ylab("Bias") +
   xlab("Missing covariate(s)") +
@@ -299,8 +196,7 @@ ggplot(results_simple_simulations[results_simple_simulations$Method == "G-formul
                          linetype = c("solid", "dashed", "blank"),
                          shape = c(NA, NA, 16)))) +
   theme(legend.title=element_blank(), legend.position = "top", text = element_text(size=15)) +
-  ggsave("./figures/bias_bis.pdf", width = 8, height = 3)
-
+  ggsave("./figures/theorem1.pdf", width = 8, height = 5)
 ```
 
 
@@ -316,7 +212,6 @@ ggplot(results_simple_simulations[results_simple_simulations$Method != "Tau_DM" 
   geom_hline(aes(yintercept = ATE_RCT, linetype = "RCT's ATE"), color = "darkblue") +
   theme(text = element_text(size=12), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
   xlab("") +
-  #ggtitle("Missing covariate(s): ") +
   xlab("") +
   ylab("ATE")  +
     theme(legend.title = element_blank(), 
@@ -326,25 +221,21 @@ ggplot(results_simple_simulations[results_simple_simulations$Method != "Tau_DM" 
   ggsave("./figures/simple-simulation.pdf", width = 8, height = 3)
 ```
 
-## Impact of coefficients
+## Impact on coefficients
 
 ```{r}
 correlations_X1_X5 <- c(0.05, 0.5, 0.95)
 coefficients_bias_results <- data.frame("correlations_X1_X5" = c(),
-                                        "beta_5" = c(),
                                         "delta_5"= c(),
                                         "bias" = c())
 for (cor in correlations_X1_X5){
   for (i in 1:100){
     simulation <- generate_simulation(correlation = cor)
-    reg_lin_treat_wo_X1 <- lm(Y~X2+X3+X4+X5, data = simulation[simulation$S == 1 & simulation$A == 1,])
-    reg_lin_not_treat_wo_X1 <- lm(Y~X2+X3+X4+X5, data = simulation[simulation$S == 1 & simulation$A == 0,])
-    beta_5 = reg_lin_not_treat_wo_X1$coefficients["X5"]
-    delta_5 = reg_lin_treat_wo_X1$coefficients["X5"] - beta_5
+    delta_5 <- get_coefficients_with_Robinson_proc(data = simulation[, c("X2", "X3", "X4", "X5", "S", "A", "Y")], learning_m = "linear", covariate_names = c("X2", "X3", "X4", "X5"))["X5"]
     
     bias = TRUE_ATE - compute_gformula(simulation[, c("X2", "X3", "X4", "X5", "S", "A", "Y")])
     
-    new_result = data.frame("correlations_X1_X5" = cor, "beta_5" = beta_5, "delta_5" = delta_5, "bias" = bias)
+    new_result = data.frame("correlations_X1_X5" = cor, "delta_5" = delta_5, "bias" = bias)
     
     coefficients_bias_results <- rbind(coefficients_bias_results, new_result)
   }
@@ -355,17 +246,11 @@ for (cor in correlations_X1_X5){
 ```{r}
 library(plyr)
 
-ddply(coefficients_bias_results, .(correlations_X1_X5), summarize,  Beta_5 = mean(beta_5), Delta_5 = mean(delta_5), Bias = mean(bias))
+ddply(coefficients_bias_results, .(correlations_X1_X5), summarize, Delta_5 = mean(delta_5), Bias = mean(bias))
 ```
 
 
 # Sensitivity analysis
-
-```{r}
-variables = c("X1", "X2", "X3", "X4", "X5")
-columns_to_keep = c("X2", "X3", "X4", "X5", "S", "A", "Y")
-correlations_X1_X5 = 0.8
-```
 
 ## Totally missing covariate
 
@@ -379,9 +264,14 @@ simulation <- generate_simulation(correlation = 0)
 n = nrow(simulation[simulation$S == 1,])
 m = nrow(simulation[simulation$S == 0,])
 tau_hat_dm <- compute_mean_diff_RCT(simulation)
+
+
+# surface responses are only used for the R2
 mu_1 = lm(Y ~., data = simulation[simulation$S == 1 & simulation$A == 1, !names(simulation) %in% c("S", "A")])
 mu_0 = lm(Y ~., data = simulation[simulation$S == 1 & simulation$A == 0, !names(simulation) %in% c("S", "A")])
-hat_deltas = mu_1$coefficients - mu_0$coefficients
+
+
+hat_deltas = get_coefficients_with_Robinson_proc(simulation)
 tau_hat_gformula <- compute_gformula(simulation)
 
 # generate grid for heatmap
@@ -416,7 +306,7 @@ other_covariates <- data.frame("variable" = c(),
                                "delta" = c(),
                                "R2" = c())
 
-for (variable in variables){
+for (variable in COVARIATE_NAMES){
 
   shift_for_this_variable <- mean(simulation[simulation$S == 0, variable]) - mean(simulation[simulation$S == 1, variable])
 
@@ -441,26 +331,26 @@ for (variable in variables){
 ```
 
 ```{r}
-library(ggrepel)
 ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
   # stat_contour() +
   theme_classic() + 
   geom_contour_filled() +
-  stat_contour(breaks = tau_hat_gformula - tau_hat_dm) +
+  stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5) +
   geom_point(data = other_covariates,
              aes(x = shift,
                  y = delta, label = variable),
-                 shape = 3) +
-  geom_label_repel(data = other_covariates, aes(x = shift, y = delta, label = variable)) +
+                 shape = 3, size = 5, stroke = 1.5) +
+  geom_label_repel(data = other_covariates, aes(x = shift, y = delta, label = variable), size = 9) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-xlab(expression(Shift~paste("(",Delta[u],")"))) +
-  ylab(expression(Influence~on~Y~paste("(",delta[u],")"))) +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=15)) +
+xlab(expression(Shift~paste("(",Delta[mis],")"))) +
+  ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        axis.title=element_text(size=24,face="bold"))  +
   guides(fill = guide_legend(title.position = "right",direction = "vertical",
-                               title.theme = element_text(angle = 90, size = 12, colour = "black"),
+                               title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[g]))) +
+                               title = expression(Bias~" "~tau-hat(tau)[G[obs]]))) +
   ggsave("./figures/totally-missing-linear.pdf")
   
 ```
@@ -473,16 +363,16 @@ other_covariates_for_R2$shift <- abs(other_covariates_for_R2$shift)
   
 ggplot(heatmap_data_for_R2, aes(x = shift, y = R2, z = bias)) + 
   theme_classic()  +
-  stat_contour(breaks = tau_hat_gformula - tau_hat_dm) +
+  stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5) +
   geom_point(data = other_covariates_for_R2,
              aes(x = shift,
                  y = R2, label = variable),
-                 shape = 3) +
-  geom_label_repel(data = other_covariates_for_R2, aes(x = shift, y = R2, label = variable)) +
+                 shape = 3, size = 5, stroke = 1.5) +
+  geom_label_repel(data = other_covariates_for_R2, aes(x = shift, y = R2, label = variable), size = 9) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-  xlab(expression(Shift~paste("(",Delta[u],")"))) +
+  xlab(expression(Absolute~shift~paste("(|",Delta[mis],"|)"))) +
   ylab(expression(Influence~on~Y~paste("(Partial  ",R^{2},")"))) +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=26)) +
   ggsave("./figures/totally-missing-linear-austen.pdf")
 ```
 
@@ -494,26 +384,23 @@ Nguyen method application.
 
 ```{r}
 sensitivity_parameter_nguyen = seq(0.8, 1.2, by = 0.1) # represents the guess on E[U] in target pop.
+
 results_nguyen_obs_data <- data.frame("sensitivity_parameter" = c(),
                                       "Target_ATE" = c())
 variables = c("X2", "X3", "X4", "X5")
 missing_covariate = "X1"
 
 for (mean_sens in sensitivity_parameter_nguyen){
-  for (rep in 1:repetitions){
+  for (rep in 1:50){
     
-    simulation <- generate_simulation(correlation = correlations_X1_X5)
+    simulation <- generate_simulation()
     
-    # estimate CATE
-    mu_1 <- lm(Y~X1+X2+X3+X4+X5, data = simulation[simulation$S == 1 & simulation$A == 1,])
-    mu_0 <- lm(Y~X1+X2+X3+X4+X5, data = simulation[simulation$S == 1 & simulation$A == 0,])
-    
-    # extract coefficient
-    deltas = (mu_1$coefficients - mu_0$coefficients)
+    # Estimate coefficients
+    deltas = get_coefficients_with_Robinson_proc(simulation, learning_m = "linear")
     
     # apply sensitivity method
     RWE <- simulation[simulation$S == 0,]
-    ate <- deltas[variables] %*%  as.matrix(colMeans(RWE[,variables]))  +  deltas["(Intercept)"] + deltas[missing_covariate]*mean_sens
+    ate <- deltas[variables] %*%  as.matrix(colMeans(RWE[,variables])) + deltas[missing_covariate]*mean_sens
     new_result <- data.frame("sensitivity_parameter" = mean_sens, "Target_ATE" = ate)
     
     results_nguyen_obs_data <- rbind(results_nguyen_obs_data, new_result)
@@ -588,7 +475,7 @@ final_data <- data.frame("shift" = c(),
 
 
 # generate a data set
-simulation <- generate_simulation(correlation = correlations_X1_X5)
+simulation <- generate_simulation()
 empirical_sigma = cor(simulation[simulation$S == 0 , c("X1", "X2", "X3", "X4", "X5")])
 
 # browse all the variables
@@ -640,22 +527,24 @@ ggplot(final_data[final_data$missing_variable != "X5", ], aes(x = shift, y = del
   geom_point(data = final_data[final_data$missing_variable != "X5", ],
              aes(x = true_shift,
                  y = true_delta),
-                 shape = 3) +
+                 shape = 3, size = 5, stroke = 1) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-  xlab(expression(Shift~paste("(",Delta[u],")"))) +
-  ylab(expression(Influence~on~Y~paste("(",delta[u],")"))) +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=15)) +
+  xlab(expression(Shift~paste("(",Delta[mis],")"))) +
+  ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        axis.title=element_text(size=20,face="bold"),
+        strip.text.x = element_text(size = 12,face="bold"))  + # last one is for facet grid
   guides(fill = guide_legend(title.position = "right",direction = "vertical",
-                               title.theme = element_text(angle = 90, size = 12, colour = "black"),
+                               title.theme = element_text(angle = 90, size = 18, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[g]))) +
-  ggsave("./figures/sensitivity_missing_rct.pdf", width = 8, height = 4)
+                               title = expression(Bias~" "~tau-hat(tau)[G[obs]]))) +
+  ggsave("./figures/sensitivity_missing_rct.pdf", width = 10, height = 4)
 ```
 
 ## Proxy 
 
-Now we suppose we do not have X1, but rather X6 which is generated from X1.
+Now we suppose we do not have X1, but rather X6 which is generated from X1 with a noise. X6 is called the proxy variable in the paper.
 
 ```{r}
 noises <- seq(0,4,0.1)
@@ -677,10 +566,6 @@ for (noise in noises){
     estimate_with_omitted_variable <- compute_gformula(simulation[,c("X2", "X3", "X4", "X5", "A", "S", "Y")])
     empirical_bias <- TRUE_ATE - estimate
     
-    # # compute theoretical bias
-    # shift = mean(simulation[simulation$S == 0, "X6"]) - mean(simulation[simulation$S == 1, "X6"])
-    # delta_prox_hat <- lm(Y~., data = simulation[simulation$S == 1 & simulation$A == 1, c("X2", "X3", "X4", "X5", "X6", "A", "S", "Y")])$coefficients["X6"] - lm(Y~., data = simulation[simulation$S == 1 & simulation$A == 0, c("X2", "X3", "X4", "X5", "X6", "A", "S", "Y")])$coefficients["X6"]
-    # theory <- delta_prox_hat*shift*noise*noise
     new_result <- data.frame("estimate" = estimate, "noise" = noise, "empirical_bias" = empirical_bias, "estimate.OV" = estimate_with_omitted_variable)
     results_proxy <- rbind(results_proxy, new_result)
   }
@@ -689,22 +574,7 @@ for (noise in noises){
 
 
 ```{r}
-# # if represent theoretical bias with estimate
-# theoretical_results <- results_proxy %>%
-#   group_by(noise) %>%
-#   dplyr::summarise(avg_theoretical_bias = mean(theoretical_bias),
-#             uci_theoretical_bias = CI(theoretical_bias)[1],
-#             lci_theoretical_bias = CI(theoretical_bias)[3])
-
-results_proxy$theory <- 30*(1 - 0.73)*(1-1/(1+results_proxy$noise^2))
-ggplot(results_proxy, aes(x = as.factor(noise), y = empirical_bias)) +
-  geom_boxplot() +
-  geom_point(aes(x = as.factor(noise), y = theory), color = "darkblue", shape = 2, size = 3) +
-  #geom_point(data=theoretical_results, aes(x = as.factor(noise), y = lci_theoretical_bias), size=4, color = "red") +
-  geom_hline(yintercept = TRUE_ATE - mean(results_simple_simulations[results_simple_simulations$without == "X1, X5" & results_simple_simulations$Method == "G-formula", "Estimate"])) +
-  theme_bw() 
-# +ggsave("./figures/simulation-linear-proxy.pdf")
-
+results_proxy$theory <- DELTA[1]*(1 - 0.73)*(1-1/(1+results_proxy$noise^2))
 ```
 
 
@@ -814,17 +684,21 @@ simulation <- generate_simulation_logit()
 
 
 ```{r}
-repetitions = 50
+repetitions = 100
 estimate = c()
 method = c()
 without = c()
 variables = c("X1", "X2", "X3", "X4", "X5")
 columns = names(simulation)
 
+value_on_rct <- c()
+
 for (i in 1:repetitions){
   
   # generate a simulation
   simulation <- generate_simulation_logit()
+  
+  value_on_rct<- c(value_on_rct, compute_mean_diff_RCT(simulation))
   
   # run on the data set with missing covariate
   for (column in variables){
@@ -854,26 +728,33 @@ results_logit <- data.frame("Estimate" = estimate,
 ```
 
 ```{r}
+ATE_RCT_binary = mean(value_on_rct)
+ATE_target_binary = mean(results_logit[results_logit$without == "none", "Estimate"])
+
 ggplot(results_logit, aes(x = Method, y = Estimate, fill = Method)) +
   geom_boxplot() +
   facet_grid(~without) +
   theme_bw() + 
-  geom_hline(yintercept = ATE_RCT_binary, color = "darkblue", linetype = "dashed") +
-  geom_hline(yintercept = ATE_target_binary, color = "purple", linetype = "dashed") +
+  geom_hline(aes(yintercept =  ATE_target_binary, color = "Target population ATE"), linetype = "dashed") + 
+  geom_hline(aes(yintercept = ATE_RCT_binary, color = "RCT's ATE")) + 
+  scale_color_manual(values=c('darkblue','red', "#C31ECE"), 
+                     guide = guide_legend(override.aes = list(
+                         linetype = c("solid", "dashed"),
+                         shape = c(NA, NA)))) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
-  xlab("") +
-  ggtitle("Missing covariate(s) in both data set - Binary")  +
-    theme(legend.title = element_blank(), 
-          legend.position="bottom", legend.box = "horizontal") +  # no title in legend
+  xlab("Missing covariate(s)") +
+  ylab("Bias") +
+  theme(legend.title=element_blank(), legend.position = "top", text = element_text(size=15)) +
   scale_fill_brewer(palette = "Set2") +
-  ggsave("./simple-simulation-logit.pdf")
+  ggsave("./figures/simple-simulation-logit.pdf", height = 4, width = 9)
+
 ```
 
 
 # Imputation
 
 ```{r}
-repetitions = 100
+repetitions = 50
 correlation_coefficients <- c(0.1, 0.25, 0.5, 0.75, 0.9)
 
 results_when_imputing <- data.frame("correlation" = c(),
@@ -918,7 +799,7 @@ results_when_imputing %>%
   ggplot(aes(x = method, y = estimates, fill = method)) +
   geom_boxplot() +
   facet_grid(~correlation) +
-  theme_classic() +
+  theme_bw()  +
   theme(axis.text.x=element_text(angle=45, hjust=1)) +
   geom_hline(yintercept = TRUE_ATE, color = "red", linetype = "dashed") +
   theme(#axis.title.x=element_blank(),
@@ -931,7 +812,10 @@ results_when_imputing %>%
   xlab(Correlation~between~X[1]~and~X[5])  +
   scale_fill_brewer(palette = "Set2") +
   ggsave("./figures/linear_imputation_variance_effect.pdf", width = 10, height = 4)
+
+
 ```
+
 
 
 

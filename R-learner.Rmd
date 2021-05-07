@@ -1,0 +1,166 @@
+---
+title: "R-learner"
+author:
+  - Bénédicte Colnet^[Inria, benedicte.colnet@inria.fr]
+date: "April 2021"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+keywords: Robinson; Variance; HTE; CATE; OLS.
+abstract: "In this notebook we reproduce the analysis of the Robinson procedure versus the T-learner procedure to estimate the coefficients of the linear CATE."
+---
+
+```{r}
+# remove old objects if any for reproducibility
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+# Set random generator seed for reproducible results
+set.seed(123)
+
+# Set pwd
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+library(ggplot2)
+library(randomForest)
+library(rpart)
+library(quantreg) # quantile regression
+library(rattle) # fancyRpartPlot 
+library(rpart.plot) # fancyRpartPlot 
+library(RColorBrewer) # fancyRpartPlot
+library(caret)
+library(MASS)
+library(caTools) # sample.plit
+library(dplyr) # group by
+
+# Load methods from estimators.R 
+source("./estimators.R")
+
+# Load parameters
+source("./parameters.R")
+
+# Function to generate the simulation
+source("./generate_simulation.R")
+```
+
+
+We aim to recover the delta coefficients of the CATE with different model estimation, in particular we propose a T-learner procedure and a R-learner procedure.
+
+```{r}
+get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", covariate_names = COVARIATE_NAMES, ratio = 0.5){
+  
+  # select parameters for hyperparameters selection
+  parameters = trainControl(method= "repeatedcv", number=3, repeats=1)
+  
+  # focus on RCT only
+  temp <- data[data$S == 1, c(COVARIATE_NAMES, "Y", "A")]
+  
+  # prepare the two folds
+  x <- c(TRUE, FALSE)
+  first_fold_id = sample(x,
+                         nrow(temp),
+                         replace = TRUE, 
+                         prob = c(.5, .5))
+
+  fold_1 <- temp[first_fold_id,]
+  fold_2 <- temp[!first_fold_id,]
+  
+  # sanity check
+  assertthat::are_equal(nrow(fold_2)+nrow(fold_1), nrow(temp))
+  
+  # learn E[Y|X] while choosing best hyperparameters if needed
+  if (learning_m == "linear"){
+    
+    hat_m_fitting_on_fold_1 <- lm(Y~., data = fold_1[, !names(fold_1) %in% c("S", "A")])
+    hat_m_fitting_on_fold_2 <- lm(Y~., data = fold_2[, !names(fold_2) %in% c("S", "A")])
+    
+  } else if (learning_m == "tree"){
+    
+    # first, find best depth
+    cart = caret::train(Y~.,
+                        data = temp,
+                        method = "rpart2",
+                        trControl=parameters,
+                        tuneLength=10,
+                        maxdepth = 20)
+    best_depth = cart$bestTune$maxdepth
+
+    # learn on two folds
+    hat_m_fitting_on_fold_1 <- rpart(Y~., data = fold_1[, !names(fold_1) %in% c("S", "A")], maxdepth = best_depth)
+    hat_m_fitting_on_fold_2 <- rpart(Y~., data = fold_2[, !names(fold_2) %in% c("S", "A")], maxdepth = best_depth)
+    
+  } else {
+    print("error on learning_m parameter.")
+    break
+  }
+  
+  fold_1$Y_star <- fold_1$Y - predict(hat_m_fitting_on_fold_2, newdata = fold_1)
+  fold_2$Y_star <- fold_2$Y  - predict(hat_m_fitting_on_fold_1, newdata = fold_2)
+  temp <- rbind(fold_1, fold_2)
+  
+  Z_star <- c()
+  for (covariate in covariate_names){
+    new_name <- paste0(covariate, "_star")
+    Z_star <- c(Z_star, new_name)
+    temp[,new_name] <- (temp$A - ratio)*temp[, covariate]
+  }
+  
+  fmla_cate <- paste("Y_star ~", paste(Z_star, collapse = " + "))
+  
+  hat_CATE_linear_model <- lm(fmla_cate, temp)
+  hat_CATE_linear_model <- hat_CATE_linear_model$coefficients[paste0(covariate_names, "_star")]
+  names(hat_CATE_linear_model) <- covariate_names
+  return(hat_CATE_linear_model)
+}
+```
+
+
+
+```{r}
+analysis_of_coefficients <- data.frame("Method" = c(),
+                                       "Coefficient" = c(),
+                                       "Estimate" = c(),
+                                       "g" = c(),
+                                       "model_for_m" = c())
+
+for (method_m in c("linear", "tree")){
+  for (g in c("A", "B", "C", "D")){
+    for (i in 1:30){
+      simulation <- generate_simulation(model = g, ratio = 0.5)
+      naive_coeff <- get_coefficients_with_naive_proc(simulation, covariate_names = COVARIATE_NAMES)
+      robinson_coeff <- get_coefficients_with_Robinson_proc(simulation, learning_m = method_m, ratio = 0.5)
+      
+      for (covariate in COVARIATE_NAMES){
+        new_result = data.frame("Method" = "naive", "Coefficient" = covariate, "Estimate" = naive_coeff[covariate], "g" = g, "model_for_m" = NA)
+        analysis_of_coefficients <- rbind(analysis_of_coefficients, new_result)
+        new_result = data.frame("Method" = "robinson", "Coefficient" = covariate, "Estimate" = robinson_coeff[covariate], "g" = g, "model_for_m" = method_m)
+        analysis_of_coefficients <- rbind(analysis_of_coefficients, new_result)
+      }
+    }
+  }
+}
+
+```
+
+```{r}
+# ggplot(analysis_of_coefficients, aes(x = Method, y = Estimate)) +
+#   geom_boxplot() +
+#   facet_grid(~Coefficient) +
+#   theme_bw()
+```
+
+```{r}
+summary <- analysis_of_coefficients  %>% 
+  group_by(g, model_for_m, Method, Coefficient) %>%
+  summarise("Mean" = mean(Estimate), "sd" = sd(Estimate)) %>%
+  mutate_if(is.numeric, round, digits=2)
+
+summary
+```
+
+

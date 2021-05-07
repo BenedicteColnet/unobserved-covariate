@@ -1,0 +1,190 @@
+---
+title: "Non-parametric examples"
+author:
+  - Bénédicte Colnet^[Inria, benedicte.colnet@inria.fr]
+date: "April 2021"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+keywords: IPSW; G-formula; missing covariate; bias; generalization; non-parametric.
+theme: null
+abstract: "Non-parametric simulations."
+---
+
+```{r, message = F}
+# remove old objects if any for reproducibility
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+# Set random generator seed for reproducible results
+set.seed(123)
+
+# Set pwd
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+library(ggplot2) # plot
+library(MASS) # simulations
+library(caret) #  wrapper for automatic prediction tool
+library(dplyr) # %>%
+library(fastAdaboost) # adaboost for IPSW
+library(rpart)
+library(grf)
+
+# Load methods from estimators.R 
+source("./estimators.R")
+
+# Load parameters
+source("./parameters.R")
+
+# Function to generate the simulation
+source("./generate_simulation.R")
+```
+
+
+```{r}
+non_param_simulation <- generate_totally_nonparametric_simulation()
+t.test(non_param_simulation[non_param_simulation$S ==1 & non_param_simulation$A == 0, "Y"], non_param_simulation[non_param_simulation$S == 1 & non_param_simulation$A == 1, "Y"])
+```
+
+The RCT overestimates the target population ATE.
+
+```{r}
+mean(non_param_simulation[non_param_simulation$S == 1 & non_param_simulation$A == 1, "Y"])
+mean(non_param_simulation[non_param_simulation$S == 1 & non_param_simulation$A == 0, "Y"])
+```
+
+
+```{r}
+compute_gformula_with_Random_forest(non_param_simulation, tuning = "none")
+```
+
+
+```{r}
+# this function is only used in non parametric regression
+compute_ipsw_non_param <- function(DF, normalized = TRUE, procedure = "logit", plot_estimates = FALSE){
+  
+  N <- nrow(DF)
+  n <- nrow(DF[DF$S ==1, ])
+  m <- nrow(DF[DF$S ==0, ])
+  
+  temp <- DF
+  
+  # Estimation of P(V = 1 | X)
+  # p <-- P(V = 1 | X) 
+  
+  if (procedure == "logit"){
+    
+    # with logistic regression
+    p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
+    p <- predict(p.fit, type = "response", newdata = temp)
+    
+  } 
+  else if (procedure == "tree") {
+    
+    # # if adaboost
+    # temp$S <- as.factor(temp$S)
+    # p.fit <- adaboost(S~., data = temp[, !names(temp) %in% c("A", "Y")], 3)
+    # p <- predict(p.fit, newdata = non_param_simulation)$prob
+    p.fit <- rpart(S~., data = temp[, !names(temp) %in% c("A", "Y")])
+    p <- predict(p.fit, newdata = non_param_simulation)
+    
+    
+  } 
+  else {
+    print("Wrong estimation parameter.")
+    break
+  }
+  
+    # clipping data in case it is needed
+    p[ p < 0.001 ] <- 0.001
+    p[ p > 0.999 ] <- 0.999
+  
+  if(plot_estimates){
+    hist(p)
+  }
+  
+  # Store odds
+  temp$odds <- ((1 - p)/p)
+  
+  # Keep only RCT for the rest of the calculus
+  temp <- temp[temp$S == 1,]
+  
+  if (normalized == FALSE){
+    tau_ipsw <- (2/m)*with(temp, sum(odds*A*Y - odds*(1-A)*Y))  
+  } else {
+    tau_ipsw <- with(temp, sum(odds*A*Y/sum(odds*A) - odds*(1-A)*Y/sum(odds*(1-A))))
+  }
+  
+  return(tau_ipsw)
+}
+```
+
+
+```{r}
+compute_ipsw_non_param(non_param_simulation, procedure = "tree", plot_estimates = T, normalized = F)
+```
+
+# Impact of missing covariates
+
+As detailed in the paper, only covariates $X_1$ and $X_3$ are necessary to generalize the ATE.
+
+
+```{r}
+estimates_with_missing_covariate <- data.frame("missing_covariate" = c(),
+                                        "estimation" = c(),
+                                        "method"= c())
+
+tau_1 <- c()
+
+for (i in 1:10){
+  non_param_simulation <- generate_totally_nonparametric_simulation()
+  tau_1 <- c(tau_1, compute_mean_diff_RCT(non_param_simulation))
+  for (missing_covariate in c("none", "X1", "X2", "X3", "X4")){
+    estimate <- compute_gformula_with_Random_forest(non_param_simulation[, setdiff(c(COVARIATE_NAMES, "Y", "A", "S"), missing_covariate)], tuning = "none")
+    new_result = data.frame("missing_covariate" = missing_covariate, "estimation" = estimate, "method" = "g-formula")
+    estimates_with_missing_covariate <- rbind(estimates_with_missing_covariate, new_result)
+    
+    
+    estimate <- compute_ipsw_non_param(non_param_simulation[, setdiff(c(COVARIATE_NAMES, "Y", "A", "S"), missing_covariate)], procedure = "tree", normalized = F)
+    new_result = data.frame("missing_covariate" = missing_covariate, "estimation" = estimate, "method" = "IPSW")
+    estimates_with_missing_covariate <- rbind(estimates_with_missing_covariate, new_result)
+    
+    
+    #  estimate <- compute_ipsw_non_param(non_param_simulation[, setdiff(c(COVARIATE_NAMES, "Y", "A", "S"), missing_covariate)], procedure = "tree", normalized = T)
+    # new_result = data.frame("missing_covariate" = missing_covariate, "estimation" = estimate, "method" = "IPSW.normalized")
+    # estimates_with_missing_covariate <- rbind(estimates_with_missing_covariate, new_result)
+  }  
+}
+```
+
+
+```{r}
+ggplot(estimates_with_missing_covariate[estimates_with_missing_covariate$method != "IPSW.normalized",], 
+       aes(x = method, y = estimation, fill = method)) + 
+  geom_boxplot() + 
+  theme_bw() + 
+  geom_hline(aes(yintercept = mean(tau_1), linetype = "RCT's ATE"), color = "darkblue") +
+  geom_hline(aes(yintercept = 12.6, linetype = "Target population's ATE"), color = "red") +
+  facet_grid(~missing_covariate) +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  xlab("") +
+  ylab("ATE")+
+    theme(legend.title = element_blank(), 
+          legend.position="bottom", legend.box = "horizontal") +  # no title in legend
+  scale_fill_brewer(palette = "Set2") + 
+  scale_color_manual(values=c('darkblue','red', "#C31ECE"),
+                     guide = guide_legend(override.aes = list(
+                         linetype = c("solid", "dashed", "blank"),
+                         shape = c(NA, NA, 16)))) +
+  theme(legend.title=element_blank(), legend.position = "bottom", text = element_text(size=15), axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  ggsave("./figures/simulation-boxplot-bias-nonparam-model.pdf", height = 4, width = 6)
+```
+
+
+
+
