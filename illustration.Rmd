@@ -1,0 +1,222 @@
+---
+title: "Illustration"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Set random generator seed for reproducible results
+set.seed(123)
+
+# Libraries
+library(ggplot2) # plots
+library(MASS) # simulation
+library(metR) # color ggplot2 heatmap
+library(SuperLearner) # to fit the model
+```
+
+We propose a simulation with three covariates, with only two treatment effect modifiers $X_1$ and $X_2$. The first covariate $X_1$ is a strong treatment effect modifier, while the second one $X_2$ is a less important treatment effect modifier, but suffers from an important shift in between the observational sample and the RCT sample.
+
+
+```{r}
+# parameters
+nrwe = 500000
+nrct = 100000
+
+mu_rct = c(0.5, 1,1)
+mu_rwe = c(0.43, 1.2, 1)
+
+# functions
+generate_baseline <- function(covariate_matrix){
+  return(5*covariate_matrix$X1 + 5*covariate_matrix$X2 + 5*covariate_matrix$X3)
+}
+
+generate_CATE <- function(covariate_matrix){
+  #return(30*exp(-(covariate_matrix$X1 - 0.5 - 0.2*log(4 + covariate_matrix$X2))**2/2))
+  return(20*covariate_matrix$X1 - 2*covariate_matrix$X2)
+}
+
+simulate_environment <- function(number_of_observations, means){
+  source_data <- mvrnorm(n = number_of_observations, mu = means, Sigma = diag(1, 3, 3))
+  source_data <- as.data.frame(source_data)
+  names(source_data) <- c("X1", "X2", "X3")
+  A <- rbinom(number_of_observations, 1, 0.5)
+  noise <- rnorm(number_of_observations, mean = 0, sd = 0.01)
+  baseline <- generate_baseline(source_data)
+  cate <- generate_CATE(source_data)
+  source_data$Y <-  baseline + (A == 1)*cate + noise
+  source_data$A <- A
+  return(source_data)
+}
+
+compute_gformula_with_SL <- function(DF){
+  
+  W <- subset(DF[DF$S == 0, ], select = -c(A,Y, S))
+
+  #SL.library = c("SL.glm", "SL.glm.interaction", "SL.xgboost", "SL.glmnet", "SL.ranger")
+  SL.library = c("SL.lm", "SL.interaction")
+    
+  SL.outcome <- SuperLearner(Y = DF[DF$S == 1, "Y"], X=subset(DF[DF$S == 1,], select = -c(Y,S)),
+                                     SL.library=SL.library)
+  
+  SL.outcome.treated <- predict(SL.outcome, newdata=data.frame(cbind(W, A=rep(1,nrow(W)))))$pred
+  SL.outcome.untreated<- predict(SL.outcome, newdata=data.frame(cbind(W,A=rep(0,nrow(W)))))$pred
+  
+  SL.plugin.gcomp<-mean(SL.outcome.treated-SL.outcome.untreated)
+  
+  return(SL.plugin.gcomp)
+}
+
+
+compute_ipsw <- function(DF, normalized = FALSE, estimation = "logit"){
+  
+  N <- nrow(DF)
+  n <- nrow(DF[DF$S ==1, ])
+  m <- nrow(DF[DF$S ==0, ])
+  
+  temp <- DF
+  
+  # Estimation of P(V = 1 | X)
+  # p <-- P(V = 1 | X) 
+  
+  if (estimation == "logit"){
+    
+    # with logistic regression
+    p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
+    p <- predict(p.fit, type = "response", newdata = temp)
+    # p.fit <- SuperLearner(Y=temp$S, X=subset(DF, select=-c(A,Y)),
+    # SL.library = c("SL.glmnet"),
+    # family="binomial")
+    #p <- p.fit$SL.predict
+    
+  } 
+  else if (estimation == "forest") {
+    break
+  } 
+  else {
+    print("Estimation parameter should be forest or logit.")
+    break
+  }
+  
+  # Store odds
+  temp$odds <- ((1 - p)/p)
+  
+  # Keep only RCT for the rest of the calculus
+  temp <- temp[temp$S == 1,]
+  
+  if (normalized == FALSE){
+    tau_ipsw <- (2/m)*with(temp, sum(odds*A*Y - odds*(1-A)*Y))  
+  } else {
+    tau_ipsw <- with(temp, sum(odds*A*Y/sum(odds*A) - odds*(1-A)*Y/sum(odds*(1-A))))
+  }
+  
+  return(tau_ipsw)
+}
+```
+
+Estimation of asymptotic values.
+
+```{r}
+big_RCT <- simulate_environment(500000, means = mu_rct)
+TAU1 <- mean(big_RCT[big_RCT$A == 1, "Y"]) - mean(big_RCT[big_RCT$A == 0, "Y"])
+TAU1
+big_RWE <- simulate_environment(500000, means = mu_rwe)
+TAU <- mean(big_RWE[big_RWE$A == 1, "Y"]) - mean(big_RWE[big_RWE$A == 0, "Y"])
+TAU
+```
+
+
+```{r}
+generate_illustrative_simulation <- function(means_rct = mu_rct, means_rwe = mu_rwe, n_rct = nrct, n_rwe = nrwe){
+  RCT <- simulate_environment(n_rct, means = means_rct)
+  RWE <- simulate_environment(n_rwe, means = means_rwe)
+  RCT$S <- rep(1, n_rct)
+  RWE$S <- rep(0, n_rwe)
+  combined <- rbind(RCT, RWE)
+  return(combined)
+}
+combined <- generate_illustrative_simulation()
+```
+
+It can be helpful to visualize the CATE.
+
+```{r}
+X1s = seq(-1,1, by = 0.1)
+X2s = seq(-1,5, by = 0.1)
+heatmap_data <- as.data.frame(expand.grid(X1s, X2s))
+names(heatmap_data) <- c("X1", "X2")
+heatmap_data$delta = generate_CATE(heatmap_data)
+```
+
+
+```{r}
+ggplot(heatmap_data, aes(X2, X1, z = delta)) + 
+  geom_contour() +
+  geom_contour_filled() +
+  #scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
+  theme_bw() 
+```
+
+
+```{r}
+compute_gformula_with_SL(DF = combined)
+```
+
+```{r}
+compute_ipsw(DF = combined, normalized = TRUE)
+```
+
+
+```{r}
+estimates_with_missing_covariate <- data.frame("missing_covariate" = c(),
+                                        "estimation" = c(),
+                                        "method"= c())
+
+for (i in 1:10){
+  
+  simulation <- generate_illustrative_simulation()
+  
+  for (missing_covariate in c("none", "X1", "X2")){
+    
+    estimate <- compute_gformula_with_SL(simulation[, setdiff(c("X1", "X2", "X3", "Y", "A", "S"), missing_covariate)])
+    
+    new_result = data.frame("missing_covariate" = missing_covariate, "estimation" = estimate, "method" = "g-formula")
+    
+    estimates_with_missing_covariate <- rbind(estimates_with_missing_covariate, new_result)
+    
+    
+    estimate <- compute_ipsw(simulation[, setdiff(c("X1", "X2", "X3", "Y", "A", "S"), missing_covariate)], normalized = TRUE)
+    
+    new_result = data.frame("missing_covariate" = missing_covariate, "estimation" = estimate, "method" = "IPSW")
+    
+    estimates_with_missing_covariate <- rbind(estimates_with_missing_covariate, new_result)
+    
+  }  
+}
+```
+
+
+```{r}
+ggplot(estimates_with_missing_covariate, 
+       aes(x = method, y = estimation, fill = method)) + 
+  geom_boxplot() + 
+  theme_bw() + 
+  geom_hline(aes(yintercept = TAU1, linetype = "RCT's ATE"), color = "darkblue") +
+  geom_hline(aes(yintercept = TAU, linetype = "Target population's ATE"), color = "red") +
+  facet_grid(~missing_covariate) +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  xlab("") +
+  ylab("ATE")+
+    theme(legend.title = element_blank(), 
+          legend.position="bottom", legend.box = "horizontal") +  # no title in legend
+  scale_fill_brewer(palette = "Set2")
+  # scale_color_manual(values=c('darkblue','red'),
+  #                    guide = guide_legend(override.aes = list(
+  #                        linetype = c("solid", "dashed"),
+  #                        shape = c(NA, NA)))) +
+  #theme(legend.title=element_blank(), legend.position = "bottom", text = element_text(size=15), axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
+```
+

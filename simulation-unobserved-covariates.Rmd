@@ -29,6 +29,7 @@ library(Rmisc) # summarySE
 library(caret)
 library(rpart)
 library(ggrepel) # austen plot
+library(metR)
 
 # Load methods from estimators.R 
 source("./estimators.R")
@@ -332,7 +333,6 @@ for (variable in COVARIATE_NAMES){
 
 ```{r}
 ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
-  # stat_contour() +
   theme_classic() + 
   geom_contour_filled() +
   stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5) +
@@ -342,7 +342,7 @@ ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) +
                  shape = 3, size = 5, stroke = 1.5) +
   geom_label_repel(data = other_covariates, aes(x = shift, y = delta, label = variable), size = 9) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-xlab(expression(Shift~paste("(",Delta[mis],")"))) +
+xlab(expression(Shift~paste("(",Delta[m],")"))) +
   ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
         axis.title=element_text(size=24,face="bold"))  +
@@ -363,16 +363,16 @@ other_covariates_for_R2$shift <- abs(other_covariates_for_R2$shift)
   
 ggplot(heatmap_data_for_R2, aes(x = shift, y = R2, z = bias)) + 
   theme_classic()  +
-  stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5) +
+  stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5, show.legend = TRUE) +
   geom_point(data = other_covariates_for_R2,
              aes(x = shift,
                  y = R2, label = variable),
                  shape = 3, size = 5, stroke = 1.5) +
   geom_label_repel(data = other_covariates_for_R2, aes(x = shift, y = R2, label = variable), size = 9) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-  xlab(expression(Absolute~shift~paste("(|",Delta[mis],"|)"))) +
+  xlab(expression(Absolute~shift~paste("(|",Delta[m],"|)"))) +
   ylab(expression(Influence~on~Y~paste("(Partial  ",R^{2},")"))) +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=26)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=26)) + 
   ggsave("./figures/totally-missing-linear-austen.pdf")
 ```
 
@@ -529,7 +529,7 @@ ggplot(final_data[final_data$missing_variable != "X5", ], aes(x = shift, y = del
                  y = true_delta),
                  shape = 3, size = 5, stroke = 1) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-  xlab(expression(Shift~paste("(",Delta[mis],")"))) +
+  xlab(expression(Shift~paste("(",Delta[m],")"))) +
   ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
         axis.title=element_text(size=20,face="bold"),

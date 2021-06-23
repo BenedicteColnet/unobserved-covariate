@@ -355,7 +355,7 @@ ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) +
   geom_vline(xintercept = true_shift+0.1, linetype = "dashed") +
   geom_vline(xintercept = true_shift-0.1, linetype = "dashed") +
    scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
- xlab(expression(Shift~paste("(",Delta[mis],")"))) +
+ xlab(expression(Shift~paste("(",Delta[m],")"))) +
     ylab(expression(delta[mis])) +
     theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=20)) +
    guides(fill = guide_legend(title.position = "right",direction = "vertical",
