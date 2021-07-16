@@ -771,7 +771,7 @@ for (coeff in correlation_coefficients){
     
     # generate simulation
     simulation <- generate_simulation(correlation = coeff) 
-   
+    
    # create models
     lm.missing.RCT <- lm(X1 ~ X5, data = simulation[simulation$S == 0, variables])
     lm.missing.obs <- lm(X1 ~ X5, data = simulation[simulation$S == 1, variables])
