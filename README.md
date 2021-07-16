@@ -37,7 +37,7 @@ Approximate time needed to reproduce the analyses on a standard desktop machine:
 
 
 # Want to use the functions?
-Feel free to open the `functions.R` document and use function for your own purpose. The functions use a concatenated data frame of the RCT and the observational sample. So you need to have your covariates (with any columns names), the outcome `Y`, the treatment `A`, and an indicatrix of being in the RCT (`S=1`) or not (`S=0`).
+Feel free to open the `estimators.R` document and use function for your own purpose. The functions use a concatenated data frame of the RCT and the observational sample. So you need to have your covariates (with any columns names), the outcome `Y`, the treatment `A`, and an indicatrix of being in the RCT (`S=1`) or not (`S=0`).
 
 
 # Any questions?
