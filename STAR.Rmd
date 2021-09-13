@@ -22,6 +22,7 @@ library(ggplot2) # plots
 library(tidyverse)
 library(lubridate) # date management
 library(grf)
+library(CovTools) # variance-covariance tests
 
 # Load methods from estimators.R 
 source("./estimators.R")
@@ -150,6 +151,14 @@ ggplot(RCT, aes(x = g1surban)) +
 ggplot(RWE, aes(x = g1surban)) +
   geom_bar()
 ```
+Variance-covariance matrix inspection.
+
+```{r}
+CovTest2.2013Cai(as.matrix(RCT[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")]), 
+                 as.matrix(RWE[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban")]), alpha = 0.05)
+```
+
+
 
 ```{r}
 star <- rbind(RCT, RWE)
@@ -175,6 +184,7 @@ upper_ci <- estimated_difference + 1.96 * se_hat
 TAU1 = c(Difference = estimated_difference, CI_inf = lower_ci, CI_sup = upper_ci)
 TAU1
 ```
+
 
 
 The confidence intervals are estimated via non-parametric stratified bootstrap.

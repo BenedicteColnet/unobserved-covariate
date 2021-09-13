@@ -30,6 +30,7 @@ library(caret)
 library(rpart)
 library(ggrepel) # austen plot
 library(metR)
+library(CovTools) # variance-covariance tests
 
 # Load methods from estimators.R 
 source("./estimators.R")
@@ -65,6 +66,21 @@ ggplot(simulation, aes(x = X2)) +
   theme_bw() +
   xlim(-4, 4) +
   ylim(-2, 1200)
+```
+## Variance-covariance matrix
+
+One can observe how often the variance-covariance matrix can be considered to be the same in both data samples.
+
+```{r}
+stat_test_results <- c()
+for (i in 1:100){
+  simulation <- generate_simulation()
+  stat_test_results <- c(stat_test_results, CovTest2.2013Cai(as.matrix(simulation[simulation$S == 0, COVARIATE_NAMES]), as.matrix(simulation[simulation$S == 1, COVARIATE_NAMES]), alpha = 0.05)$reject)
+}
+```
+
+```{r}
+table(stat_test_results)
 ```
 
 
