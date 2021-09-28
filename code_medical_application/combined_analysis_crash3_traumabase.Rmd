@@ -348,9 +348,19 @@ table(total$S)
 ## CRASH-3 analysis
 
 ```{r}
-t.test(total[total$S ==1 & total$A == 1 & total$Y, "Y"], total[total$S ==1 & total$A == 0, "Y"])
+t.test(total[total$S ==1 & total$A == 1, "Y"], total[total$S ==1 & total$A == 0, "Y"])
 ```
-We can conclude on a treatment effect of the tranexamic acid on the outcome when the mild and moderate injured patient who survived.
+We can conclude on no treatment effect.
+
+Note that the time to treatment seems to be important.
+
+```{r}
+t.test(total[total$S ==1 & total$A == 1 & total$time_to_treatment < 30, "Y"], total[total$S ==1 & total$A == 0 & total$time_to_treatment < 30, "Y"])
+```
+
+```{r}
+t.test(total[total$S ==1 & total$A == 1 & total$time_to_treatment > 30, "Y"], total[total$S ==1 & total$A == 0 & total$time_to_treatment > 30, "Y"])
+```
 
 ## Assumptions
 
@@ -371,7 +381,7 @@ covEllipses(total[, c("age", "blood", "glasgow", "pupil")],
             pooled = FALSE)
 ```
 
-A statistical test would reject largely assumption 8.
+A statistical test would largely reject assumption 8.
 
 ```{r}
 boxM(total[, observed.covariates], group = total$S)
@@ -382,17 +392,14 @@ Then, we make the approximation that the time to treatment is independent with a
 
 ## Generalization without the time-to-treatment variable
 
-Note that when using the original Traumabase, the standard estimators (IPSW, G-formula) need to be adapted to handle missing values that are not missing completely at random (MCAR).
-
-We propose a way to handle this missing values problematic: Generalized random forests that consider that missing values are potentially  informative, this is achieved through the *missing incorporated in attributes* (MIA) criterion 
-
 Point estimate: 
 ```{r}
-ate_gformula_wo_ttt <- compute_gformula_with_Random_forest(total[, !names(total) %in% c("time_to_treatment")])
+ate_gformula_wo_ttt <- compute_gformula_with_ranger(total[, !names(total) %in% c("time_to_treatment")])
+ate_gformula_wo_ttt
 ```
 
 ```{r}
-stratified_bootstrap <- function(DF, nboot = 50){
+stratified_bootstrap <- function(DF, nboot = 10){
   
   estimands <- c()
   
@@ -413,7 +420,7 @@ stratified_bootstrap <- function(DF, nboot = 50){
     rownames(RCT_RWD) <- 1:nrow(RCT_RWD)
     
     # estimation
-    estimands <- c(estimands, compute_gformula_with_Random_forest(RCT_RWD))
+    estimands <- c(estimands, compute_gformula_with_ranger(RCT_RWD))
   }
   return(estimands)
 }
@@ -429,11 +436,10 @@ GENERALIZED_ATE_wo_time_to_treatment
 # Sensitivity analysis when totally unobserved covariate
 
 ```{r}
-observed_covariates <- c("age", "Glasgow.initial", "systolicBloodPressure", "sexe", "pupilReact_num")
 total_substudy <- total
 
 # variable scaling
-for (covariate in observed_covariates){
+for (covariate in observed.covariates){
   total_substudy[, covariate] <- as.numeric(total_substudy[, covariate])
   sd_cov <- sd(total_substudy[, covariate], na.rm = T)
   total_substudy[, covariate] <- total_substudy[, covariate] / sd_cov
@@ -443,9 +449,9 @@ for (covariate in observed_covariates){
 
 
 ```{r}
-hat_deltas = get_coefficients_with_Robinson_proc(total_substudy, learning_m = "forest", covariate_names = observed_covariates)
+hat_deltas = get_coefficients_with_Robinson_proc(total_substudy, learning_m = "forest", covariate_names = observed.covariates)
 
-get_bootstraped_coeff_Robinson <- function(DF, nboot = 50, covariate_names = observed_covariates, init.result){
+get_bootstraped_coeff_Robinson <- function(DF, nboot = 50, covariate_names = observed.covariates, init.result){
   
   for (i in 1:nboot){
   
@@ -469,11 +475,11 @@ hat_deltas_with_CI <- data.frame("delta" = c(),
                                  "CI_inf_delta" = c(),
                                  "CI_sup_delta" = c(),
                                  "covariate" = c(),
-                               "shift" = c(),
+                                "shift" = c(),
                                "CI_inf_shift" = c(),
                                "CI_sup_shift" = c())
 
-for (covariate in observed_covariates){
+for (covariate in observed.covariates){
   
   shift_estimate <- t.test(total_substudy[total_substudy$S == 0, covariate], total_substudy[total_substudy$S == 1, covariate], na.rm = TRUE)
   shift_sup <- shift_estimate$conf.int[[2]]
@@ -498,7 +504,7 @@ for (covariate in observed_covariates){
 ```{r}
 # initialization parameters for the heat map
 shifts <- seq(-0.8, 0.8, by = 0.05)
-deltas <- seq(-0.05, 0.32,by = 0.005) 
+deltas <- seq(-0.3, 0.4,by = 0.05) 
 
 n = nrow(total_substudy[total_substudy$S == 1,])
 m = nrow(total_substudy[total_substudy$S == 0,])
@@ -521,7 +527,6 @@ ggplot(data = hat_deltas_with_CI,
   geom_pointrange(data = hat_deltas_with_CI,aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.4) +
   geom_pointrange(data = hat_deltas_with_CI, aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.4) +
   geom_label_repel(data = hat_deltas_with_CI, aes(x = shift, y = delta, label = covariate), size = 5.5) +
-  #geom_text_repel(box.padding = 0.5, max.overlaps = Inf, size = 5) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
   xlab(expression(Normalized~shift~paste("(",Delta[mis],")"))) +
   ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
@@ -531,7 +536,7 @@ ggplot(data = hat_deltas_with_CI,
                                title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[G[obs]]))) +
+                               title = expression(Bias~" "~tau-hat(tau)[G[obs]])))
   ggsave("./austen-plot-traumabase.pdf")
   
 ```

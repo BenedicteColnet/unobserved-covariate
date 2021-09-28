@@ -133,7 +133,11 @@ get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", cov
   } else if (learning_m == "forest"){
     
     # regression_forest performes hyperparameters selection
-    hat_m = regression_forest(temp[, covariate_names], temp[, "Y"], tune.parameters = "all")
+    #hat_m = regression_forest(temp[, covariate_names], temp[, "Y"], tune.parameters = "all")
+    hat_m = ranger(Y ~ ., 
+            num.trees = 1000,
+            data = data[data$S == 1 & data$A == 1, covariate_names],
+            splitrule = "variance")
     
     # do not put newdata - so that out of bag sample is taken for forest
     temp$Y_star <- temp$Y - predict(hat_m)$predictions
