@@ -119,7 +119,7 @@ compute_aipsw <- function(DF, normalized = FALSE) {
 }
 
 
-get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", covariate_names = COVARIATE_NAMES, ratio = 0.5){
+get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", covariate_names = COVARIATE_NAMES, ratio = 0.5, print_information_on_cefficients = FALSE){
   
   # focus on RCT only
   temp <- data[data$S == 1, c(covariate_names, "Y", "A")]
@@ -155,6 +155,11 @@ get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", cov
   fmla_cate <- paste("Y_star ~", paste(Z_star, collapse = " + "))
   
   hat_CATE_linear_model <- lm(fmla_cate, temp)
+  
+  if(!print_information_on_cefficients){
+    print(summary(hat_CATE_linear_model))
+  }
+  
   hat_CATE_linear_model <- hat_CATE_linear_model$coefficients[paste0(covariate_names, "_star")]
   
   names(hat_CATE_linear_model) <- covariate_names
