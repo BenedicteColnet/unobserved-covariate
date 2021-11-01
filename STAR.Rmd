@@ -273,7 +273,8 @@ ggplot(results, aes(x=names_recoded, y=Difference)) +
   coord_flip() +
   theme_bw() +
   xlab("") +
-  ylab("Estimated ATE")
+  ylab("Estimated ATE") + 
+  annotate(x=+Inf,y=GROUND_TRUTH["Difference"],label="Ground truth",vjust=1, geom="label", color = "red")
   ggsave("./figures/bilan_star.pdf", width = 4, height = 2.5)
 ```
 
