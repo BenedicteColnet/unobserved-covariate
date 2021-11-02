@@ -378,7 +378,7 @@ BIAS = results[results$names == "GENERALIZED_ATE_all_cov", "Difference"] - resul
 
 ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
   geom_contour_filled() +
-  stat_contour(breaks = BIAS, size = 0.5, color = "blue") +
+  stat_contour(breaks = BIAS, size = 0.8, color = "red") +
   theme_classic() + 
   geom_point(x = true_shift,
                  y = data.driven.delta,

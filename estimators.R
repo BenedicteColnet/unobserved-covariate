@@ -156,7 +156,7 @@ get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", cov
   
   hat_CATE_linear_model <- lm(fmla_cate, temp)
   
-  if(!print_information_on_cefficients){
+  if(print_information_on_cefficients){
     print(summary(hat_CATE_linear_model))
   }
   

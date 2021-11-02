@@ -261,7 +261,7 @@ coefficients_bias_results <- data.frame("correlations_X1_X5" = c(),
 for (cor in correlations_X1_X5){
   for (i in 1:100){
     simulation <- generate_simulation(correlation = cor)
-    delta_5 <- get_coefficients_with_Robinson_proc(data = simulation[, c("X2", "X3", "X4", "X5", "S", "A", "Y")], learning_m = "linear", covariate_names = c("X2", "X3", "X4", "X5"))["X5"]
+    delta_5 <- get_coefficients_with_Robinson_proc(data = simulation[, c("X2", "X3", "X4", "X5", "S", "A", "Y")], learning_m = "linear", covariate_names = c("X2", "X3", "X4", "X5"), print_information_on_cefficients = FALSE)["X5"]
     
     bias = TRUE_ATE - compute_gformula(simulation[, c("X2", "X3", "X4", "X5", "S", "A", "Y")])
     
@@ -365,21 +365,21 @@ ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) +
   theme_classic() + 
   geom_contour_filled() +
   stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5) +
-  geom_point(data = other_covariates,
+  geom_point(data = other_covariates[other_covariates$variable == "X3",],
              aes(x = shift,
                  y = delta, label = variable),
                  shape = 3, size = 5, stroke = 1.5) +
-  geom_label_repel(data = other_covariates, aes(x = shift, y = delta, label = variable), size = 9) +
+  geom_label_repel(data = other_covariates[other_covariates$variable == "X3",], aes(x = shift, y = delta, label = variable), size = 9) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
 xlab(expression(Shift~paste("(",Delta[m],")"))) +
   ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
-        axis.title=element_text(size=24,face="bold"))  +
+        axis.title=element_text(size=20,face="bold"))  +
   guides(fill = guide_legend(title.position = "right",direction = "vertical",
                                title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[G[obs]]))) +
+                               title = expression(Bias~" "~tau-hat(tau)[G[obs]])))
   ggsave("./figures/totally-missing-linear.pdf")
   
 ```
@@ -393,15 +393,15 @@ other_covariates_for_R2$shift <- abs(other_covariates_for_R2$shift)
 ggplot(heatmap_data_for_R2, aes(x = shift, y = R2, z = bias)) + 
   theme_classic()  +
   stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5, show.legend = TRUE) +
-  geom_point(data = other_covariates_for_R2,
+  geom_point(data = other_covariates_for_R2[other_covariates_for_R2$variable == "X3",],
              aes(x = shift,
                  y = R2, label = variable),
                  shape = 3, size = 5, stroke = 1.5) +
-  geom_label_repel(data = other_covariates_for_R2, aes(x = shift, y = R2, label = variable), size = 9) +
+  geom_label_repel(data = other_covariates_for_R2[other_covariates_for_R2$variable == "X3",], aes(x = shift, y = R2, label = variable), size = 9) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
   xlab(expression(Absolute~shift~paste("(|",Delta[m],"|)"))) +
   ylab(expression(Influence~on~Y~paste("(Partial  ",R^{2},")"))) +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=26)) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=20)) 
   ggsave("./figures/totally-missing-linear-austen.pdf")
 ```
 
@@ -567,7 +567,7 @@ ggplot(final_data[final_data$missing_variable != "X5", ], aes(x = shift, y = del
                                title.theme = element_text(angle = 90, size = 18, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[G[obs]]))) +
+                               title = expression(Bias~" "~tau-hat(tau)[G[obs]])))
   ggsave("./figures/sensitivity_missing_rct.pdf", width = 10, height = 4)
 ```
 
@@ -621,7 +621,7 @@ ggplot(results_proxy, aes(x = noise, y = theory, color = "Theory")) +
                          linetype = c("dashed", "blank", "solid"),
                          shape = c(NA, 19, NA)))) +
   theme_bw() +
-  theme(legend.title=element_blank(), legend.position = "top", text = element_text(size=15)) +
+  theme(legend.title=element_blank(), legend.position = "top", text = element_text(size=15))
   ggsave("./figures/simulation-linear-proxy.pdf", width = 8, height = 3)
 ```
 
