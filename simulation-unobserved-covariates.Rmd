@@ -20,7 +20,6 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 set.seed(123)
 
 # Libraries
-library(ggplot2) # plots
 library(MASS) # simulation
 library(tidyverse) # tidy data
 library(matlib) # inverse of a matrix
@@ -71,6 +70,7 @@ ggplot(simulation, aes(x = X2)) +
 ## Variance-covariance matrix
 
 ```{r}
+#col = options(heplot.colors =c("darkgreen", "magenta", "blue", "darkgray"))
 covEllipses(simulation[, c("X1", "X2", "X3", "X4", "X5")],
             group = simulation$S,  
             fill=c(rep(FALSE,1), TRUE), 
@@ -90,10 +90,11 @@ covEllipses(simulation[, c("X1", "X2", "X3", "X4", "X5")],
 ## to change color
 # col = options(heplot.colors =c("darkgreen", "magenta", "blue", "darkgray"))
 ```
+
 The Box's M-test can be performed.
 
 ```{r}
-boxM(simulation[,c("X1", "X2", "X3", "X4", "X5")], group = simulation$S)
+boxM(simulation[, c("X1", "X2", "X3", "X4", "X5")], group = simulation$S)
 ```
 
 
@@ -156,7 +157,7 @@ theoretical_bias_result  <- data.frame("Bias" = theoretical_bias,
 Computations of the empirical bias for all the patterns
 
 ```{r, echo = FALSE, message = FALSE}
-repetitions = 100
+repetitions = 50
 estimate = c()
 method = c()
 without = c()
@@ -211,20 +212,22 @@ results_simple_simulations <- data.frame("Estimate" = estimate,
 Comparison of empirical results and the theoretical bias.
 
 ```{r}
-ggplot(results_simple_simulations[results_simple_simulations$Method == "G-formula" | results_simple_simulations$Method == "IPSW",], aes(x = without, y = Estimate)) +
+results_simple_simulations$bias <- results_simple_simulations$Estimate - TRUE_ATE
+ggplot(results_simple_simulations[results_simple_simulations$Method == "G-formula" | results_simple_simulations$Method == "IPSW",], aes(x = without, y = bias)) +
   geom_boxplot() +
-  geom_point(data = theoretical_bias_result, aes(x = without, y = TRUE_ATE - Bias, color = "Theorical bias"), size = 4, shape = 16) +
+  geom_point(data = theoretical_bias_result, aes(x = without, y = -Bias, color = "Theorem's prediction"), size = 3, shape = 16, alpha = 0.8) +
   theme_bw() +
   facet_wrap(~ Method, nrow = 2) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
   ylab("Bias") +
   xlab("Missing covariate(s)") +
-  geom_hline(aes(yintercept =  TRUE_ATE, color = "Target population ATE"), linetype = "dashed") + 
-  geom_hline(aes(yintercept = TAU1, color = "RCT's ATE")) + 
-  scale_color_manual(values=c('darkblue','red', "#C31ECE"),
-                     guide = guide_legend(override.aes = list(
-                         linetype = c("solid", "dashed", "blank"),
-                         shape = c(NA, NA, 16)))) +
+  geom_hline(aes(yintercept =  0), linetype = "dashed", color = "darkblue", size = 0.8) + 
+  #geom_hline(aes(yintercept =  TRUE_ATE, color = "Target population ATE"), linetype = "dashed") + 
+  #geom_hline(aes(yintercept = TAU1, color = "RCT's ATE")) + 
+  # scale_color_manual(values=c('darkblue','red', "#C31ECE"),
+  #                    guide = guide_legend(override.aes = list(
+  #                        linetype = c("solid", "dashed", "blank"),
+  #                        shape = c(NA, NA, 16)))) +
   theme(legend.title=element_blank(), legend.position = "top", text = element_text(size=15))
   ggsave("./figures/theorem1.pdf", width = 8, height = 5)
 ```
@@ -276,7 +279,165 @@ for (cor in correlations_X1_X5){
 ```{r}
 library(plyr)
 
-ddply(coefficients_bias_results, .(correlations_X1_X5), summarize, Delta_5 = mean(delta_5), Bias = mean(bias))
+ddply(coefficients_bias_results, .(correlations_X1_X5), summarize, Delta_5 = mean(delta_5), Bias = -mean(bias))
+```
+
+
+## Impact of a very strong shift (related to Assumption 8)
+
+
+Computations of the empirical bias for all the patterns and a moving coefficient
+
+```{r, echo = FALSE, message = FALSE}
+repetitions = 50
+estimate = c()
+method = c()
+without = c()
+columns = names(simulation)
+model <- c()
+coeff <- c()
+p.value <- c()
+coefficients <- seq(0, -2, by = -0.2)
+
+
+for(coefficient in coefficients){ 
+  
+    moving_BETA =  c(coefficient, 0, -0.3, -0.3, 0) 
+  
+    for (i in 1:repetitions){
+      
+    # generate a simulation
+    simulation <- generate_simulation(model = "linear", bs = moving_BETA)
+    
+    # loop over various missing covariate patterns
+    for (nb_mis in c(1,2,3)){ #3:p-2
+      patterns <- combn(1:P, nb_mis)
+      for(index in 1:dim(patterns)[2]){
+        mis = patterns[,index]
+        obs <- setdiff(1:P, mis)
+        columns_to_keep <- paste(rep("X",length(obs)), obs, sep = "")
+        columns_to_keep <- c(columns_to_keep, "S", "A", "Y")
+  
+        estimate <- c(estimate, compute_mean_diff_RCT(simulation),
+                      compute_ipsw(simulation[, columns_to_keep], normalized = TRUE),
+                       compute_gformula(simulation[, columns_to_keep]),
+                      compute_aipsw(simulation[, columns_to_keep], normalized = TRUE)) 
+                      
+       method <- c(method, "Tau_DM", "IPSW", "G-formula", "AIPSW")
+       missing <- stri_paste(paste0(rep("X", nb_mis), mis), collapse = ", ")
+       without <- c(without, missing, missing, missing, missing)
+       coeff <- c(coeff, rep(coefficient, 4))
+       test <- boxM(simulation[,c("X1", "X2", "X3", "X4", "X5")], group = simulation$S)
+       p.value <- c(p.value, rep(test$p.value, 4))
+      }
+    }
+       # with all variables (control)
+       estimate <- c(estimate,  compute_mean_diff_RCT(simulation),
+                      compute_ipsw(simulation, normalized = TRUE),
+                       compute_gformula(simulation),
+                     compute_aipsw(simulation, normalized = TRUE))
+                      
+       method <- c(method, "Tau_DM", "IPSW", "G-formula", "AIPSW")
+       without <- c(without, "none", "none", "none", "none")
+       coeff <- c(coeff, rep(coefficient, 4))
+       p.value <- c(p.value, rep(test$p.value, 4))
+       model <- c(model, model_for_g, model_for_g, model_for_g, model_for_g)
+    }
+}
+
+results_simple_simulations <- data.frame("Estimate" = estimate,
+                                         "Method" = method,
+                                         "without" = without,
+                                         "model" = model,
+                                         "coefficient" = coeff,
+                                         "p.value" = p.value)
+
+results_simple_simulations$coefficient <- as.factor(results_simple_simulations$coefficient)
+```
+
+
+
+
+```{r}
+# vectors to store our results
+theoretical_bias <- c()
+missing <- c()
+coeff <- c()
+
+# loop over various missing covariate patterns
+for (coefficient in coefficients){
+  
+  moving_BETA =  c(coefficient, 0, -0.3, -0.3, 0) 
+  simulation <- generate_simulation(m = 10000, bs = moving_BETA)
+  RCT <- simulation[simulation$S == 1,]
+  expected_values_RCT <- c("X1" = mean(RCT$X1),
+                       "X2" = 1,
+                       "X3" = mean(RCT$X3),
+                       "X4" = mean(RCT$X4),
+                       "X5" = mean(RCT$X5))
+  TAU1 <- compute_mean_diff_RCT(simulation)
+  expected_values_RWE <- rep(1, P)
+  
+  
+  for (nb_mis in 3:P-2){
+    patterns <- combn(1:P, nb_mis)
+    for(index in 1:dim(patterns)[2]){
+      
+      mis = patterns[,index]
+      
+      # create variance-covariance matrix
+      obs <- setdiff(1:P, mis)
+      Sigma_mis_obs <- SIGMA[mis, obs]
+      Sigma_obs_obs <- SIGMA[obs, obs]
+       
+      # compute bias according to lemma
+      bias <- DELTA[mis] %*% ( (expected_values_RWE[mis] - expected_values_RCT[mis]) -
+                                        Sigma_mis_obs%*% inv(Sigma_obs_obs)%*% (expected_values_RWE[obs] - expected_values_RCT[obs]))
+      # 
+      # # store results
+      theoretical_bias <- c(theoretical_bias, bias)
+      missing <- c(missing, stri_paste(paste0(rep("X", nb_mis), mis), collapse = ", "))
+      coeff <- c(coeff, coefficient)
+    }
+  }  
+}
+
+
+theoretical_bias_result  <- data.frame("Bias" = theoretical_bias,
+                                       "without" = missing,
+                                       "coefficient" = coeff)
+
+theoretical_bias_result$coefficient <- as.factor(theoretical_bias_result$coefficient)
+```
+
+Comparison of empirical results and the theoretical bias.
+
+
+```{r}
+results_simple_simulations$bias <- results_simple_simulations$Estimate - TRUE_ATE
+ggplot(results_simple_simulations[(results_simple_simulations$Method == "G-formula" | results_simple_simulations$Method == "IPSW") & results_simple_simulations$without %in% c("X1"),], aes(x = coefficient, y = bias)) +
+  geom_boxplot() +
+  geom_point(data = theoretical_bias_result[theoretical_bias_result$without  %in% c("X1"),], aes(x = coefficient, y = -Bias, color = "Theorem's prediction"), size = 3, shape = 16, alpha = 0.8) +
+  theme_bw() +
+  facet_wrap( ~ Method, nrow = 2) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  ylab("Bias") +
+  xlab(expression(beta[s][1])) +
+  geom_hline(aes(yintercept =  0), linetype = "dashed", color = "darkblue", size = 0.8) + 
+  #geom_hline(aes(yintercept =  TRUE_ATE, color = "Target population ATE"), linetype = "dashed") + 
+  #geom_hline(aes(yintercept = TAU1, color = "RCT's ATE")) + 
+  # scale_color_manual(values=c('darkblue','red', "#C31ECE"),
+  #                    guide = guide_legend(override.aes = list(
+  #                        linetype = c("solid", "dashed", "blank"),
+  #                        shape = c(NA, NA, 16)))) +
+  theme(legend.title=element_blank(), legend.position = "top", text = element_text(size=16, face = "bold"))
+  ggsave("./figures/theorem1-strong-bias.pdf", width = 8, height = 5)
+```
+
+```{r}
+for (coeff in coefficients){
+  print(mean(results_simple_simulations[results_simple_simulations$coefficient == coeff, "p.value"]))
+}
 ```
 
 
@@ -361,10 +522,10 @@ for (variable in COVARIATE_NAMES){
 ```
 
 ```{r}
-ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
+ggplot(heatmap_data, aes(x = shift, y = delta, z = -bias)) + 
   theme_classic() + 
   geom_contour_filled() +
-  stat_contour(breaks = tau_hat_gformula - tau_hat_dm, size = 1.5) +
+  stat_contour(breaks = tau_hat_dm - tau_hat_gformula, size = 1.5) +
   geom_point(data = other_covariates[other_covariates$variable == "X3",],
              aes(x = shift,
                  y = delta, label = variable),
@@ -379,7 +540,7 @@ xlab(expression(Shift~paste("(",Delta[m],")"))) +
                                title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[G[obs]])))
+                               title = expression(Bias~" "~hat(tau)[G[obs]]-tau)))
   ggsave("./figures/totally-missing-linear.pdf")
   
 ```
@@ -500,12 +661,25 @@ final_data <- data.frame("shift" = c(),
                          "true_bias" = c(),
                          "true_shift" = c(),
                          "true_delta" = c(),
+                         "estimated_delta" = c(),
                          "missing_variable" = c())
 
 
 # generate a data set
 simulation <- generate_simulation()
 empirical_sigma = cor(simulation[simulation$S == 0 , c("X1", "X2", "X3", "X4", "X5")])
+
+ESTIMATED.DELTA <- rep(NA, 5)
+# Estimated delta imagining an imputation procedure
+for  (missing_variable_number in 1:5){
+  temp <- simulation
+  missing_variable = paste0("X", missing_variable_number)
+  imputation.formula <- formula(paste0("X", missing_variable_number, "~."))
+  imputation.model <- lm(imputation.formula, data = simulation[simulation$S == 0, COVARIATE_NAMES])
+  temp[temp$S == 1, missing_variable] <- predict.lm(imputation.model, newdata = simulation[simulation$S == 1, COVARIATE_NAMES])
+  coeff <- get_coefficients_with_Robinson_proc(data = temp)
+  ESTIMATED.DELTA[missing_variable_number] <- coeff[missing_variable]
+}
 
 # browse all the variables
 for (missing_variable_number in 1:5){
@@ -533,6 +707,8 @@ for (missing_variable_number in 1:5){
   heatmap_data$true_shift <- mean(simulation[simulation$S == 0 ,missing_variable]) -  mean(simulation[simulation$S == 1 ,missing_variable])
   
   heatmap_data$true_delta <- DELTA[missing_variable_number]
+  
+  heatmap_data$estimated_delta <- ESTIMATED.DELTA[missing_variable_number]
     
   heatmap_data$missing_variable <- rep(missing_variable, nrow(heatmap_data))
   
@@ -556,7 +732,11 @@ ggplot(final_data[final_data$missing_variable != "X5", ], aes(x = shift, y = del
   geom_point(data = final_data[final_data$missing_variable != "X5", ],
              aes(x = true_shift,
                  y = true_delta),
-                 shape = 3, size = 5, stroke = 1) +
+                 shape = 3, size = 5, stroke = 1, color = "black") +
+   # geom_point(data = final_data[final_data$missing_variable != "X5", ],
+   #           aes(x = true_shift,
+   #               y = estimated_delta),
+   #               shape = 3, size = 5, stroke = 1, color = "blue") +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
   xlab(expression(Shift~paste("(",Delta[m],")"))) +
   ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
@@ -570,6 +750,8 @@ ggplot(final_data[final_data$missing_variable != "X5", ], aes(x = shift, y = del
                                title = expression(Bias~" "~tau-hat(tau)[G[obs]])))
   ggsave("./figures/sensitivity_missing_rct.pdf", width = 10, height = 4)
 ```
+
+
 
 ## Proxy 
 
@@ -1078,66 +1260,177 @@ ggplot(aes(x = Type, y = Estimate, fill = Type)) +
 ```
 
 
+
+# Reproduce Nie et al. 2021
+
+
 ```{r}
-## Less rigorous simulation
+#set up B
+n = 2000
+p = 4
+gamma = exp(0.5)
+gamma.minus.1 = 1/gamma
+alpha0 = -2
+sigma = 0.5
+mu = c(0.709, 0.438, 0.2, 0.767)
+beta = c(0.513, 0.045, 0.7, 0.646)
+X <- matrix(runif(n*p, min=0, max=1), n, p)
 
 
-# repetitions <- 20
-# shift_strength <- c(-0.1, -0.4, -0.7, -1, -1.3, -1.6, -1.9)
-# 
-# empirical_analysis_sigma <- data.frame("T.value" = c(),
-#                                        "Shift" = c(),
-#                                        "ATE.wo.X1" = c(),
-#                                        "ATE.w.X1" = c(),
-#                                        "RCT" = c(),
-#                                        "Estimated.bias" = c())
-# 
-# 
-# for (shift in shift_strength){
-#   for (rep in 1:repetitions){
-#     
-#     # generate simulation
-#     simulation <- generate_simulation(bs = c(shift, 0, -0.3, -0.3, 0))
-#     
-#     # compute already known values
-#     RCT.estimate <- compute_mean_diff_RCT(simulation)
-#     T.value <- CovTest2.2013Cai(as.matrix(simulation[simulation$S == 0, COVARIATE_NAMES]), as.matrix(simulation[simulation$S == 1, COVARIATE_NAMES]))$statistic
-#     ATE.w.X1 <- compute_gformula(simulation)
-#     ATE.wo.X1 <- compute_gformula(simulation[, c("X2", "X3", "X4", "X5", "S", "A", "Y")])
-#     
-#     # compute bias according to lemma
-#     sigma <- cor(simulation[simulation$S == 0, c("X1", "X2", "X3", "X4", "X5")])
-#     sigma_obs_obs <- sigma[2:5,2:5]
-#     sigma_mis_obs <- sigma[1, 2:5]
-#     estimate.shift.X1 <- mean(simulation[simulation$S == 0, "X1"]) -  mean(simulation[simulation$S == 1, "X1"])
-#     delta_obs <- colMeans(simulation[simulation$S == 0, c("X2", "X3", "X4", "X5")]) - colMeans(simulation[simulation$S == 1, c("X2", "X3", "X4", "X5")])
-#     bias = DELTA[1]*(estimate.shift.X1 - sigma_mis_obs %*% inv(sigma_obs_obs) %*% delta_obs)
-#     
-#     new_row <- data.frame("T.value" = T.value,
-#                           "Shift" = shift,
-#                           "ATE.wo.X1" = ATE.wo.X1,
-#                           "ATE.w.X1" = ATE.w.X1,
-#                           "RCT" = RCT.estimate,
-#                           "Estimated.bias" = bias)
-#     
-#     empirical_analysis_sigma <- rbind(empirical_analysis_sigma, new_row)
-#   }
-#   
-# 
-# }
-# 
-# empirical_analysis_sigma_true_bias <- empirical_analysis_sigma %>%
-#   group_by(Shift) %>%
-#      summarise_at(vars("T.value", "ATE.wo.X1", "ATE.w.X1", "Estimated.bias"), mean)
-# 
-# empirical_analysis_sigma_true_bias$true.bias <- empirical_analysis_sigma_true_bias$ATE.w.X1 - empirical_analysis_sigma_true_bias$ATE.wo.X1
-# 
-# empirical_analysis_sigma_true_bias
-# empirical_analysis_sigma_true_bias %>%
-#   pivot_longer(cols = c("Estimated.bias", "true.bias"), names_to = "Type", values_to = "Bias") %>%
-#   ggplot(aes(x = T.value, y = Bias)) +
-#     geom_point() +
-#     theme_minimal()
+# beta ????
+X <- rmbeta(n, 0.5, 0.5)
+mu = c(2,2,-2,-2)
+sigma = 3
+alpha0 = 0
+gamma = exp(0.2)
+
+
+simulation <- as.data.frame(X)
+names(simulation) <- paste0("X.", 1:4)
+simulation$S = (1 - gamma.minus.1 + (gamma-1)*exp(alpha0 + X %*% mu)) / (gamma - gamma.minus.1 + (gamma - gamma.minus.1 )*exp(alpha0 + X %*% mu))
+simulation$S = rbernoulli(simulation$S)
+simulation$S = ifelse(simulation$S, 1, 0)
+simulation$Uprime = rnorm(n, mean = 0, sd = (1+0.5*sin(2.5*simulation$X.1))**2)
+simulation$U = (2*simulation$S - 1)*abs(simulation$Uprime)
+simulation$L = ifelse(simulation$U < 0,  -exp(alpha0 + X %*% mu + log(gamma)) / (1 - exp(alpha0 + X %*% mu + log(gamma))), exp(alpha0 + X %*% mu + log(gamma)) / (1 + exp(alpha0 + X %*% mu + log(gamma))))
+simulation$L = rbernoulli(simulation$L)
+simulation$L = ifelse(simulation$L, 1, 0)
+error = rnorm(n, mean = 0, sd = sigma)
+simulation$W = rbinom(n, 1, 0.5)
+simulation$Y = (X + 4) %*% beta + simulation$U + error
+simulation$Y = ifelse(simulation$W == 0, simulation$Y, simulation$Y + simulation$X.1 + simulation$U + 4)
+simulation <- simulation[, c(paste0("X.", 1:4), "U", "W", "L", "Y")]
+names(simulation) = c(paste0("X.", 1:4), "U", "A", "S", "Y")
 ```
 
+
+```{r}
+mean(simulation[simulation$S == 1 & simulation$A == 1, "Y"]) - mean(simulation[simulation$S == 1 & simulation$A == 0, "Y"])
+mean(simulation[simulation$S == 0 & simulation$A == 1, "Y"]) - mean(simulation[simulation$S == 0 & simulation$A == 0, "Y"])
+```
+
+
+```{r}
+# no covariate at all
+mean.U.obs = mean(simulation[simulation$S == 0, "U"])
+mean.U.rct = mean(simulation[simulation$S == 1, "U"])
+guessed.coeff =  1
+bias = (mean.U.obs - mean.U.rct)*guessed.coeff
+bias
+
+# covariates in the RCT (Ngyuyen)
+estimated.coef.on.RCT <- get_coefficients_with_Robinson_proc(simulation, covariate_names = c(paste0("X.", 1:4), "U"))
+estimated.coef.on.RCT
+
+# variance covariance matrix
+cor(simulation[simulation$S == 1,  c(paste0("X.", 1:4), "U")])
+cor(simulation[simulation$S == 0,  c(paste0("X.", 1:4), "U")])
+
+
+boxM(simulation[,c(paste0("X.", 1:4), "U")], group = simulation$S)
+
+
+covEllipses(simulation[, c(paste0("X.", 1:4), "U")],
+            group = simulation$S,  
+            fill=c(rep(FALSE,1), TRUE), 
+            variables=1:5, 
+            fill.alpha=.1,
+            center = TRUE,
+            pooled = FALSE)
+```
+
+
+# Toward a quasi non-parametric assumption for Corollary 1 (totally unobserved covariate)
+
+
+Assuming $$\tau(x) = g(x) + \delta_{mis}\,X_{mis},$$
+along with $X_{m i s} \independent X_{o b s}$  and $X_{o b s} \independent X_{m i s} \mid S = 1$ could allow to lighten the linearity assumption on the CATE. This section proposes a small empirical analysis of such a set-up.
+
+This simulation is just for the proof of concept. The g-formula is implemented with random forests.
+
+```{r}
+library(ranger)
+```
+
+```{r}
+test <- generate_totally_nonparametric_simulation(m = 300000)
+ATE <- mean(test$Y_1 - test$Y_0)
+ATE_1 <- compute_mean_diff_RCT(test)
+
+RCT <- simulation[simulation$S == 1,]
+expected_values_RCT <- c("X1" = mean(RCT$X1),
+                     "X2" = 1,
+                     "X3" = mean(RCT$X3),
+                     "X4" = mean(RCT$X4),
+                     "X5" = mean(RCT$X5))
+```
+
+## Totally unobserved
+
+```{r}
+delta_mis = 10
+expected.Xmiss = 1
+estimates <- c()
+
+for (i in 1:30){
+  simulation <- generate_totally_nonparametric_simulation()
+
+  outcome.model.treated <- ranger("Y ~ X2 + X3 + X4 + X5", data = simulation[simulation$S == 1 & simulation$A == 1,], min.node.size = 5, num.trees = 100)
+  outcome.model.control <- ranger("Y ~ X2 + X3 + X4 + X5", data = simulation[simulation$S == 1 & simulation$A == 0,], min.node.size = 5, num.trees = 100)
+  
+  prediction.treated <- predict(outcome.model.treated, data = simulation[simulation$S == 0, ])$predictions
+  prediction.control <- predict(outcome.model.control, data = simulation[simulation$S == 0, ])$predictions
+  
+  estimation = mean(prediction.treated) - mean(prediction.control)
+  
+  estimates <- c(estimates, estimation)
+  
+}
+
+true.bias = - delta_mis*(expected.Xmiss - expected_values_RCT["X1"])
+```
+
+```{r}
+hist(estimates)
+print(mean(estimates) - ATE)
+true.bias
+```
+
+## Observed in RCT but not observational
+
+```{r}
+coefficients = c()
+
+for (i in 1:10){
+  simulation <- generate_totally_nonparametric_simulation()
+
+  outcome.model.treated <- ranger("Y ~ X1 + X2 + X3 + X4 + X5", data = simulation[simulation$S == 1 & simulation$A == 1,], min.node.size = 5, num.trees = 100)
+  outcome.model.control <- ranger("Y ~ X1 + X2 + X3 + X4 + X5", data = simulation[simulation$S == 1 & simulation$A == 0,], min.node.size = 5, num.trees = 100)
+  
+  prediction.treated <- predict(outcome.model.treated, data = simulation[simulation$S == 0, ])$predictions
+  prediction.control <- predict(outcome.model.control, data = simulation[simulation$S == 0, ])$predictions
+  
+  CATE.total <- prediction.treated - prediction.control
+  
+  
+  outcome.model.treated.partial <- ranger("Y ~ X2 + X3 + X4 + X5", data = simulation[simulation$S == 1 & simulation$A == 1,], min.node.size = 5, num.trees = 100)
+  outcome.model.control.partial <- ranger("Y ~ X2 + X3 + X4 + X5", data = simulation[simulation$S == 1 & simulation$A == 0,], min.node.size = 5, num.trees = 100)
+  
+  prediction.treated.partial <- predict(outcome.model.treated.partial, data = simulation[simulation$S == 0, ])$predictions
+  prediction.control.partial <- predict(outcome.model.control.partial, data = simulation[simulation$S == 0, ])$predictions
+  
+  
+  CATE.partial <- prediction.treated.partial - prediction.control.partial
+  X1 <- simulation[simulation$S == 0, "X1"]
+  
+  lm.model <- lm(CATE.total ~ CATE.partial + X1)
+  coefficients <- c(coefficients, lm.model$coefficients["X1"][[1]])
+  
+}
+```
+
+
+```{r}
+coefficients
+```
 

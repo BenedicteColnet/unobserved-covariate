@@ -41,8 +41,8 @@ fig_dir <- "./Figures/"
 source('./estimators.R')
 
 
-# parameters to select all patients or only the weakly injured 
-KEEP_ALL_INDIVIDUALS = FALSE
+# scenario 1 corresponds to considering only mild and moderately injured patients who survived
+SCENARIO_1 = FALSE
 ```
 
 # Pretreatment
@@ -141,13 +141,15 @@ CRASH3$Y <- CRASH3$eyeOpening_num + CRASH3$communicationAbility_num + CRASH3$mot
 A missing value in the outcome corresponds usually to death, except for some individuals have missing values in DRS and no death reported, they are removed.
 
 ```{r}
-nrow(CRASH3[is.na(CRASH3$Y) & is.na(CRASH3$timerandtodeath),])
-CRASH3 <- CRASH3[!(is.na(CRASH3$Y) & is.na(CRASH3$timerandtodeath)),]
-```
-
-
-```{r}
-CRASH3$Y <- ifelse(is.na(CRASH3$Y), 30, CRASH3$Y)
+if(SCENARIO_1){
+  print(nrow(CRASH3))
+  CRASH3 <- CRASH3[is.na(CRASH3$timerandtodeath), ]
+  print(nrow(CRASH3))
+  CRASH3 <- CRASH3[!is.na(CRASH3$Y), ]
+  print(nrow(CRASH3))
+} else {
+  CRASH3$Y <- ifelse(is.na(CRASH3$Y), 30, CRASH3$Y)
+}
 ```
 
 
@@ -168,15 +170,16 @@ CRASH3$A <- ifelse(CRASH3$treatment == "Placebo", 0, 1)
 # load already imputed data 
 load("~/Documents/data/traumabase/data/traumabase_tbideath_tbi_imputed_mice.RData")
 imputed_traumabase <- df.imp.mice[[1]]
-imputed_traumabase$S <- rep(0, nrow(imputed_traumabase))
-names(imputed_traumabase)[names(imputed_traumabase) == "treatment"] <- "A"
-names(imputed_traumabase)[names(imputed_traumabase) == "TBI_Death"] <- "Y"
-imputed_traumabase$Y <- rep(NA, nrow(imputed_traumabase))
-imputed_traumabase$A <- rep(NA, nrow(imputed_traumabase))
-imputed_traumabase$time_to_treatment <- rep(NA, nrow(imputed_traumabase))
+# imputed_traumabase$S <- rep(0, nrow(imputed_traumabase))
+# names(imputed_traumabase)[names(imputed_traumabase) == "treatment"] <- "A"
+# names(imputed_traumabase)[names(imputed_traumabase) == "TBI_Death"] <- "Y"
+# imputed_traumabase$Y <- rep(NA, nrow(imputed_traumabase))
+# imputed_traumabase$A <- rep(NA, nrow(imputed_traumabase))
+# imputed_traumabase$time_to_treatment <- rep(NA, nrow(imputed_traumabase))
 
 print(paste0("Raw traumabase data contains following number of observations: ", nrow(imputed_traumabase)))
 ```
+
 
 ## Common set of covariates
 
@@ -264,6 +267,9 @@ ggplot(CRASH3_tbionly, aes(x = time_to_treatment)) +
   xlab("Time to treatment (min)") +
   ylab("") +
   ggtitle("CRASH3")
+
+
+sd(CRASH3_tbionly$time_to_treatment)
 ```
 
 We keep only patients eligible.
@@ -271,6 +277,7 @@ We keep only patients eligible.
 ```{r}
 # keep only people treated on time in CRASH3
 CRASH3_tbionly <- CRASH3_tbionly[CRASH3_tbionly$time_to_treatment <= 60*3,]
+sd(CRASH3_tbionly$time_to_treatment)
 ```
 
 Finally, keep only traumabase patient with no major extracranial bleeding.
@@ -283,21 +290,29 @@ imputed_traumabase <- imputed_traumabase[imputed_traumabase$majorExtracranial ==
 ```{r}
 # indicator for RCT and RWD
 CRASH3_tbionly$S <- rep(1, nrow(CRASH3_tbionly))
+imputed_traumabase$S <- rep(0, nrow(imputed_traumabase))
+
+# missing values
+imputed_traumabase$A <- rep(NA, nrow(imputed_traumabase))
+imputed_traumabase$Y <- rep(NA, nrow(imputed_traumabase))
 
 observed.covariates <- c("age", "Glasgow.initial", 'systolicBloodPressure', "sexe", "pupilReact_num")
 covariates <- c(observed.covariates, "time_to_treatment")
 
-CRASH3_tbionly <- CRASH3_tbionly[, c(covariates, "Y", "A", "S")]
+CRASH3_tbionly <- CRASH3_tbionly[, c(observed.covariates, "Y", "A", "S")]
 print(nrow(CRASH3_tbionly))
 CRASH3_tbionly <- na.omit(CRASH3_tbionly)
 print(nrow(CRASH3_tbionly))
 
+imputed_traumabase <- imputed_traumabase[, c(observed.covariates, "Y", "A", "S")]
+
 # total data frame
-total <- rbind(CRASH3_tbionly,
-               imputed_traumabase[, c(covariates, "Y", "A", "S")])
+total <- rbind(CRASH3_tbionly, imputed_traumabase)
 
 rownames(total) <- 1:nrow(total)
+
 ```
+
 
 
 ```{r}
@@ -312,7 +327,7 @@ covariates <- c(observed.covariates, "time_to_treatment")
 
 ```{r}
 # keep only the mild and moderate patient
-if (!KEEP_ALL_INDIVIDUALS){
+if (SCENARIO_1){
   print(nrow(total))
   total <- total[which((total$S == 1 & total$glasgow > 8 & total$Y < 30) | (total$S == 0 & total$glasgow > 8)),]
   print(nrow(total))
@@ -333,20 +348,10 @@ t.test(total[total$S ==1 & total$A == 1, "Y"], total[total$S ==1 & total$A == 0,
 ```
 We can conclude on no treatment effect.
 
-Note that the time to treatment seems to be important.
-
-```{r}
-t.test(total[total$S ==1 & total$A == 1 & total$time_to_treatment < 30, "Y"], total[total$S ==1 & total$A == 0 & total$time_to_treatment < 30, "Y"])
-```
-
-```{r}
-t.test(total[total$S ==1 & total$A == 1 & total$time_to_treatment > 30, "Y"], total[total$S ==1 & total$A == 0 & total$time_to_treatment > 30, "Y"])
-```
-
 ## Assumptions
 
 ```{r}
-cor(total[total$S == 1, covariates])
+cor(total[total$S == 1, observed.covariates])
 cor(total[total$S == 0, observed.covariates])
 ```
 
@@ -354,22 +359,22 @@ We observe correlations in between age and systolic blood pressure, and pupil re
 
 
 ```{r}
-covEllipses(total[, c("age", "blood", "glasgow", "pupil")],
+covEllipses(total[, c("age", "blood", "glasgow")],
             group = total$S,  
-            variables=1:4, 
+            variables=1:3, 
             fill.alpha=.1,
             center = TRUE,
             pooled = FALSE)
 ```
 
-A statistical test would largely reject assumption 8.
+Note that a statistical test would largely reject assumption 8.
 
 ```{r}
 boxM(total[, observed.covariates], group = total$S)
 boxM(total[,  c("age", "blood", "glasgow", "pupil")], group = total$S)
 ```
 
-Then, we make the approximation that the time to treatment is independent with all other variables.
+Here we tackle another assumption, that we assume the time to treatment is independent with all other variables.
 
 ## Generalization without the time-to-treatment variable
 
@@ -380,7 +385,7 @@ ate_gformula_wo_ttt
 ```
 
 ```{r}
-stratified_bootstrap <- function(DF, nboot = 10){
+stratified_bootstrap <- function(DF, nboot = 100){
   
   estimands <- c()
   
@@ -414,7 +419,7 @@ GENERALIZED_ATE_wo_time_to_treatment = c(Difference = ate_gformula_wo_ttt, CI_in
 GENERALIZED_ATE_wo_time_to_treatment
 ```
 
-# Sensitivity analysis when totally unobserved covariate
+Sensitivity analysis when totally unobserved covariate
 
 ```{r}
 total_substudy <- total
@@ -430,27 +435,83 @@ for (covariate in observed.covariates){
 
 
 
-```{r}
-hat_deltas = get_coefficients_with_Robinson_proc(total_substudy, learning_m = "forest", covariate_names = observed.covariates)
 
-get_bootstraped_coeff_Robinson <- function(DF, nboot = 10, covariate_names = observed.covariates, init.result){
+```{r}
+get_coefficients_with_Robinson_proc <- function(data, learning_m = "forest", covariate_names, ratio = 0.5, print_information_on_coefficients = FALSE){
+  
+  # focus on RCT only
+  temp <- data[data$S == 1, c(covariate_names, "Y", "A")]
+  
+  # learn E[Y|X] 
+  if (learning_m == "linear"){
+    
+    hat_m <- lm(Y~., data = temp[, !names(temp) %in% c("S", "A")])
+    temp$Y_star <- temp$Y - hat_m$predictions # careful, do not use "predict" to extract out of bag predictions
+    
+  } else if (learning_m == "forest"){
+    
+    hat_m = ranger(formula = Y~., data = temp[,  c(covariate_names, "Y")])
+  
+    temp$Y_star <- temp$Y - predict(hat_m, data = temp[,  c(covariate_names, "Y")])$predictions
+    
+    
+  } else {
+    print("error on learning_m parameter.")
+    break
+  }
+  
+  
+  Z_star <- c()
+  for (covariate in covariate_names){
+    new_name <- paste0(covariate, "_star")
+    Z_star <- c(Z_star, new_name)
+    temp[,new_name] <- (temp$A - ratio)*temp[, covariate]
+  }
+  
+  fmla_cate <- paste("Y_star ~", paste(Z_star, collapse = " + "))
+  
+  hat_CATE_linear_model <- lm(fmla_cate, temp)
+  
+  if(print_information_on_coefficients){
+    print(summary(hat_CATE_linear_model))
+  }
+  
+  hat_CATE_linear_model <- hat_CATE_linear_model$coefficients[paste0(covariate_names, "_star")]
+  
+  names(hat_CATE_linear_model) <- covariate_names
+  
+  return(hat_CATE_linear_model)
+}
+
+hat_deltas = get_coefficients_with_Robinson_proc(total_substudy, 
+                                                 learning_m = "forest", 
+                                                 covariate_names = observed.covariates)
+```
+
+
+
+```{r}
+get_bootstraped_coeff_Robinson <- function(DF, nboot = 100, covariate_names = observed.covariates, init.result){
   
   for (i in 1:nboot){
-  
+    
     # random resamples from RCT
     n = nrow(DF[DF$S == 1,])
     index_RCT = sample(1:n, n, replace = TRUE)
     
     # new data set
     boot_RCT <- DF[which(DF$S==1),][index_RCT,]
-  
+    
     # estimation
-    init.result <- rbind(init.result, get_coefficients_with_Robinson_proc(total_substudy, learning_m = "forest", covariate_names = covariate_names))
+    init.result <- rbind(init.result, get_coefficients_with_Robinson_proc(total_substudy, learning_m = "forest", covariate_names = observed.covariates))
   }
   return(init.result)
 }
 
-bootstrap <- get_bootstraped_coeff_Robinson(DF = total_substudy[, !names(total_substudy) %in% c("time_to_treatment")], init.result = data.frame(t(hat_deltas)))
+
+bootstrap <- get_bootstraped_coeff_Robinson(DF = total_substudy[, !names(total_substudy) %in% c("time_to_treatment")], 
+                                            nboot = 100,
+                                            init.result = data.frame(t(hat_deltas)))
 
 
 hat_deltas_with_CI <- data.frame("delta" = c(),
@@ -479,14 +540,13 @@ for (covariate in observed.covariates){
                                "CI_inf_shift" = shift_inf,
                                "CI_sup_shift" = shift_sup))
 }
-
 ```
 
 
 ```{r}
 # initialization parameters for the heat map
-shifts <- seq(-0.8, 0.8, by = 0.05)
-deltas <- seq(-0.3, 0.4,by = 0.05) 
+shifts <- seq(-1, 1, by = 0.05)
+deltas <- seq(-0.15, 0.3,by = 0.05) 
 
 n = nrow(total_substudy[total_substudy$S == 1,])
 m = nrow(total_substudy[total_substudy$S == 0,])
@@ -505,10 +565,10 @@ ggplot(data = hat_deltas_with_CI,
              aes(x = shift,
                  y = delta,
                  label = covariate)) + 
-  geom_contour_filled(data = heatmap_data, aes(x = shift, y = delta, z = bias)) +
+  geom_contour_filled(data = heatmap_data, aes(x = shift, y = delta, z = -bias)) +
   theme_bw() +
-  geom_pointrange(data = hat_deltas_with_CI,aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.4) +
-  geom_pointrange(data = hat_deltas_with_CI, aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.4) +
+  geom_pointrange(data = hat_deltas_with_CI, aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.3) +
+  geom_pointrange(data = hat_deltas_with_CI, aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.3) +
   geom_label_repel(data = hat_deltas_with_CI, aes(x = shift, y = delta, label = covariate), size = 5.5) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
   xlab(expression(Normalized~shift~paste("(",Delta[mis],")"))) +
@@ -519,13 +579,14 @@ ggplot(data = hat_deltas_with_CI,
                                title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[G[obs]])))
+                               title = expression(Bias~" "~hat(tau)[G[obs]]-~tau)))
   ggsave("./austen-plot-traumabase.pdf")
   
 ```
-How to understand the shift?
+`
 ```{r}
-sd(total[total$S == 0, "glasgow"])
-mean(total[total$S == 0, "glasgow"]) - mean(total[total$S == 1, "glasgow"])
+shift = mean(total[total$S  == 0 , "glasgow"] - total[total$S  == 1 , "glasgow"] )
+sd = sd(total[total$S  == 1 , "glasgow"])
+shift/sd
 ```
 

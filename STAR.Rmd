@@ -278,7 +278,6 @@ ggplot(results, aes(x=names_recoded, y=Difference)) +
   ggsave("./figures/bilan_star.pdf", width = 4, height = 2.5)
 ```
 
-
 Is the bias close to the one expected in Lemma 4?
 
 ```{r}
@@ -295,7 +294,7 @@ Sigma_obs_obs <- Sigma_oracle[obs, obs]
 # compute bias according to lemma
 bias <- delta_hat_oracle["g1surban"] * ((mean(star[star$S == 0, "g1surban"]) - mean(star[star$S == 1, "g1surban"])) - Sigma_mis_obs%*% inv(Sigma_obs_obs)%*%(colMeans(star[star$S == 0, obs]) - colMeans(star[star$S == 1, obs])))
 
-bias
+-bias
 ```
 
 ```{r}
@@ -370,10 +369,10 @@ names(heatmap_data) <- c("shift", "delta")
 sigma_mis_obs = empirical_sigma[5, 1:4]
 sigma_obs_obs = empirical_sigma[1:4, 1:4]
 delta_obs <- colMeans(star[star$S == 0, variables]) - colMeans(star[star$S == 1, variables])
-heatmap_data$bias = heatmap_data$delta*(heatmap_data$shift - sigma_mis_obs %*% inv(sigma_obs_obs) %*% delta_obs)
+heatmap_data$bias = - (heatmap_data$delta*(heatmap_data$shift - sigma_mis_obs %*% inv(sigma_obs_obs) %*% delta_obs))
 
 
-BIAS = results[results$names == "GENERALIZED_ATE_all_cov", "Difference"] - results[results$names == "GENERALIZED_ATE_miss_g1surban", "Difference"]
+BIAS = results[results$names == "GENERALIZED_ATE_miss_g1surban", "Difference"] - results[results$names == "GENERALIZED_ATE_all_cov", "Difference"]
 
 
 ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
@@ -392,7 +391,7 @@ ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) +
     ylab(expression(delta[mis])) +
     theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=20)) +
    guides(fill = guide_legend(title.position = "right",direction = "vertical",
-                               title.theme = element_text(angle = 90, size = 12, colour = "black"), barheight = .5, barwidth = .95, title.hjust = 0.5, raster = FALSE, title = expression(Bias~" "~tau-hat(tau)[G[obs]]))) 
+                               title.theme = element_text(angle = 90, size = 12, colour = "black"), barheight = .5, barwidth = .95, title.hjust = 0.5, raster = FALSE, title = expression(Bias~" "~hat(tau)[G[obs]]-tau))) 
   ggsave("./figures/star-heatmap.pdf")
 ```
 

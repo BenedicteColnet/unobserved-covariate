@@ -141,9 +141,12 @@ generate_totally_nonparametric_simulation <- function(m = 50000, p = 5, ratio = 
   
   # add CATE and error (X1 and X2 are treatment effect modifier)
   error = rnorm(n = nrow(DF), mean = 0, sd = 0.1)
-  DF$Y <- 5*DF$X1*DF$X3 + 3*exp(-DF$X4) + 
-    (DF$A == 1)*(3*DF$X1*DF$X1 + abs(DF$X3)*5 + log(1 + abs(DF$X2)))+ 
-    error
+  
+  DF$Y_0 <- 5*DF$X1*DF$X1 +  4*DF$X3 + 3*pmax(1,DF$X5) + log(1 + 3*abs(DF$X2)) + error
+  
+  DF$Y_1 <- DF$Y_0 +  3*exp(-DF$X4) + DF$X3*DF$X3 + 10*DF$X1
+  
+  DF$Y <- ifelse(DF$A == 1, DF$Y_1, DF$Y_0)
   
   return(DF)  
 }

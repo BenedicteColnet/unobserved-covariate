@@ -119,7 +119,7 @@ compute_aipsw <- function(DF, normalized = FALSE) {
 }
 
 
-get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", covariate_names = COVARIATE_NAMES, ratio = 0.5, print_information_on_cefficients = FALSE){
+get_coefficients_with_Robinson_proc <- function(data, learning_m = "forest", covariate_names = covariate_names, ratio = 0.5, print_information_on_coefficients = FALSE){
   
   # focus on RCT only
   temp <- data[data$S == 1, c(covariate_names, "Y", "A")]
@@ -132,8 +132,8 @@ get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", cov
     
   } else if (learning_m == "forest"){
     
-    # regression_forest performes hyperparameters selection
-    hat_m = regression_forest(temp[, covariate_names], temp[, "Y"], tune.parameters = "all")
+    # regression_forest performs hyperparameters selection if "all". Here "none" for faster computation
+    hat_m = regression_forest(temp[, covariate_names], temp[, "Y"], tune.parameters =  "none")
     
     # do not put newdata - so that out of bag sample is taken for forest
     temp$Y_star <- temp$Y - predict(hat_m)$predictions
@@ -156,7 +156,7 @@ get_coefficients_with_Robinson_proc <- function(data, learning_m = "linear", cov
   
   hat_CATE_linear_model <- lm(fmla_cate, temp)
   
-  if(print_information_on_cefficients){
+  if(print_information_on_coefficients){
     print(summary(hat_CATE_linear_model))
   }
   
