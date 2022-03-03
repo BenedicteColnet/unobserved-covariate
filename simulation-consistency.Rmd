@@ -1,0 +1,192 @@
+---
+title: "Consistency illustrations"
+author:
+  - Bénédicte Colnet^[Inria, benedicte.colnet@inria.fr]
+date: "February 2022"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+abstract: "This notebook contains illustrations of Section 2 of the paper *Generalizing a causal effect:  sensitivity analysis and missing covariates*, with illustrations of the consistency result"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+# Set random generator seed for reproducible results
+set.seed(123)
+
+# Libraries
+library(MASS) # simulation
+library(tidyverse) # tidy data
+library(matlib) # inverse of a matrix
+library(stringi) # for function stri_paste
+library(Rmisc) # summarySE
+library(caret)
+library(rpart)
+library(ggrepel) # austen plot
+library(metR)
+library(heplots) # variance covariance tests + viz
+library(mvtnorm) # rmvnorm
+
+# Load methods from estimators.R 
+source("./estimators.R")
+
+# Load parameters
+source("./parameters.R")
+
+# Function to generate the simulation
+source("./generate_simulation.R")
+
+TAU1 <- 43.8849
+```
+
+The simulation process can be found in the `generate_simulation.R` file, and parameters are in `parameters.R`.
+
+# When models are correctly specified
+
+
+```{r}
+repetitions = 10
+
+result.parametric <- data.frame("estimate" = c(),
+                                "estimator" = c(),
+                                "sample.size" = c())
+
+for (sample.size in c(50000)){
+  for (i in 1:repetitions){
+    simulation <- generate_simulation()
+    estimates <- compute_aipsw(simulation)
+    new.row <- data.frame("estimate" = c(estimates["ipsw"], estimates["g.formula"], estimates["aipsw"]),
+                          "estimator" = c("IPSW", "G-formula", "AIPSW"),
+                          "sample.size" = rep(sample.size, 3))
+    
+    result.parametric <- rbind(result.parametric, new.row)
+  
+  }  
+}
+
+
+
+```
+
+
+```{r}
+ggplot(result.parametric, aes(x = estimator, y = estimate,fill = estimator)) +
+  geom_boxplot() +
+  geom_hline(yintercept = TRUE_ATE) +
+  theme_bw()
+```
+
+# When models are not correctly specified
+
+```{r}
+# generate totally non-parametric simulation
+# X1 and X2 are treatment effect modifier
+# X1 and X4 are linked to trial inclusion
+generate_totally_nonparametric_simulation <- function(m = 10000, p = 5, ratio = 0.5){
+  
+  # covariates definition
+  X_names <- paste("X", 1:p, sep = "")
+  covariates_names <- c(X_names)
+  Sigma = toeplitz(0.6^(0:(p - 1)))
+  
+  mu = rep(1,p)
+  
+  # generate source population for RCT
+  source_data_for_RCT <- rmvnorm(n = m, mean = rep(1, p), sigma = Sigma)
+  source_data_for_RCT <- as.data.frame(source_data_for_RCT)
+  names(source_data_for_RCT) <- covariates_names
+  
+  # sample RCT
+  etas <- exp(-source_data_for_RCT$X4) + 0.8*source_data_for_RCT$X1*source_data_for_RCT$X1 - 3
+  ps = 1 / (1 + exp(-etas))
+  hist(ps)
+  RCT_indicator <- rbinom(length(ps), 1, as.vector(ps))
+  source_data_for_RCT$S <- RCT_indicator
+  
+  # random treatment assignment within the RCT
+  source_data_for_RCT$A <- ifelse(source_data_for_RCT$S == 1, rbinom(nrow(source_data_for_RCT), 1, ratio), NA)
+  
+  # keep only interesting variables
+  source_data_for_RCT <- source_data_for_RCT[, c(covariates_names, "A", "S")]
+  
+  # drop other data
+  RCT <- source_data_for_RCT[source_data_for_RCT$S == 1,]
+  rm(source_data_for_RCT)
+  
+  # generate target population
+  RWD <-  mvrnorm(n = m, mu = mu, Sigma = Sigma)
+  RWD <- as.data.frame(RWD)
+  names(RWD) <- covariates_names
+  
+  RWD$S <- rep(0, m)
+  RWD$A <- rep(NA, m)
+  
+  # stack RCT and RWE
+  DF <- rbind(RCT, RWD)
+  
+  # reset row number
+  rownames(DF) <- 1:nrow(DF)
+  
+  # add CATE and error (X1 and X2 are treatment effect modifier)
+  error = rnorm(n = nrow(DF), mean = 0, sd = 0.1)
+  
+  DF$Y_0 <- 5*DF$X1*DF$X1 +  4*DF$X3 + 3*pmax(1,DF$X5) + log(1 + 3*abs(DF$X2)) + error
+  
+  DF$Y_1 <- DF$Y_0 + exp(1 - DF$X3*DF$X3) + 20*pmax(DF$X3, DF$X1) 
+  
+  DF$Y <- ifelse(DF$A == 1, DF$Y_1, DF$Y_0)
+  
+  return(DF)  
+}
+test <- generate_totally_nonparametric_simulation()
+table(test$S)
+naive_ATE = mean(test[test$S == 1 & test$A == 1, "Y"]) - mean(test[test$S == 1 & test$A == 0, "Y"])
+true_ATE = mean(test[test$S == 1, "Y_1"]) - mean(test[test$S == 1, "Y_0"])
+```
+
+```{r}
+ggplot(test, aes(x = X1)) +
+  geom_histogram() +
+  facet_grid(~S)
+
+ggplot(test, aes(x = X4)) +
+  geom_histogram() +
+  facet_grid(~S)
+```
+
+
+```{r}
+repetitions = 10
+
+result.non.parametric <- data.frame("estimate" = c(),
+                                "estimator" = c(),
+                                "sample.size" = c())
+
+for (sample.size in c(50000)){
+  for (i in 1:repetitions){
+    simulation <- generate_totally_nonparametric_simulation()
+    simulation <- simulation[, c(paste0("X", 1:5), "A", "S", "Y")]
+    estimates <- compute_aipsw(simulation)
+    new.row <- data.frame("estimate" = c(estimates["ipsw"], estimates["g.formula"], estimates["aipsw"]),
+                          "estimator" = c("IPSW", "G-formula", "AIPSW"),
+                          "sample.size" = rep(sample.size, 3))
+    
+    result.non.parametric <- rbind(result.parametric, new.row)
+  
+  }  
+}
+```
+
+
+```{r}
+ggplot(result.non.parametric, aes(x = estimator, y = estimate,fill = estimator)) +
+  geom_boxplot() +
+  geom_hline(yintercept = TRUE_ATE) +
+  theme_bw()
+```
+

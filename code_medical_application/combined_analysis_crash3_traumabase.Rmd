@@ -39,10 +39,6 @@ fig_dir <- "./Figures/"
 
 # Load estimators and auxiliary functions
 source('./estimators.R')
-
-
-# scenario 1 corresponds to considering only mild and moderately injured patients who survived
-SCENARIO_1 = FALSE
 ```
 
 # Pretreatment
@@ -52,9 +48,7 @@ SCENARIO_1 = FALSE
 ```{r load_data, message=F, results='hide'}
 # Load CRASH3 data
 rawData_CRASH3 <- read_xlsx("~/Documents/data/crash/crash-data/crash3/CRASH-3_dataset_anonymised_for_Freebird.xlsx", na =c("", "NR", "NA", "NF","IMP", "ND"),)
-```
 
-```{r}
 print(paste0("Raw CRASH-3 data contains following number of observations: ", nrow(rawData_CRASH3)))
 ```
 
@@ -82,7 +76,7 @@ print(paste0("Merged data table number of observations: ", nrow(CRASH3)))
 
 ## Outcome and treatment for CRASH3
 
-Note that the regular outcome is the 28-day death due to brain injury (and not all deaths), but here we take another outcome being Disability Rating Scale (DRS). Therefore, we only keep patients who survived as this indicator assess the disability at the end.
+Note that the regular outcome is the 28-day death due to brain injury (and not all deaths), but here we take another outcome being Disability Rating Scale (DRS). 
 
 The DRS has to be computed from several indicators.
 
@@ -138,23 +132,23 @@ CRASH3$Y <- CRASH3$eyeOpening_num + CRASH3$communicationAbility_num + CRASH3$mot
   CRASH3$feeding_num + CRASH3$toileting_num + CRASH3$grooming_num + CRASH3$levelOfFunctioning_num + CRASH3$employability_num
 ```
 
-A missing value in the outcome corresponds usually to death, except for some individuals have missing values in DRS and no death reported, they are removed.
-
 ```{r}
-if(SCENARIO_1){
-  print(nrow(CRASH3))
-  CRASH3 <- CRASH3[is.na(CRASH3$timerandtodeath), ]
-  print(nrow(CRASH3))
-  CRASH3 <- CRASH3[!is.na(CRASH3$Y), ]
-  print(nrow(CRASH3))
-} else {
-  CRASH3$Y <- ifelse(is.na(CRASH3$Y), 30, CRASH3$Y)
-}
+summary(CRASH3$Y)
 ```
 
+```{r}
+# impute dead patient with 30 for the DRS
+CRASH3$Y <- ifelse(is.na(CRASH3$Y) & !is.na(CRASH3$timerandtodeath), 30, CRASH3$Y)
+```
 
 ```{r}
-table(CRASH3$Y)
+summary(CRASH3$Y)
+```
+
+Still, 161 individuals have missing $Y$. We observe that this corresponds to patients with missing values in the columns used to compute the DRS. We decide to remove these patients, as we have no measured outcome.
+
+```{r}
+CRASH3 <- CRASH3[!is.na(CRASH3$Y), ] 
 ```
 
 
@@ -164,7 +158,7 @@ CRASH3$A <- ifelse(CRASH3$treatment == "Placebo", 0, 1)
 ```
 
 
-## Load Traumabase
+## Load imputed Traumabase
 
 ```{r}
 # load already imputed data 
@@ -257,8 +251,6 @@ CRASH3_tbionly$timeSinceInjury_m <- as.numeric(CRASH3_tbionly$timeSinceInjury_m)
 CRASH3_tbionly$time_to_treatment <- CRASH3_tbionly$timeSinceInjury_h*60 + CRASH3_tbionly$timeSinceInjury_m
 ```
 
-
-
 ```{r}
 ggplot(CRASH3_tbionly, aes(x = time_to_treatment)) +
   geom_histogram(binwidth = 30, fill = "blue", color = "darkblue", alpha = 0.1) +
@@ -296,7 +288,7 @@ imputed_traumabase$S <- rep(0, nrow(imputed_traumabase))
 imputed_traumabase$A <- rep(NA, nrow(imputed_traumabase))
 imputed_traumabase$Y <- rep(NA, nrow(imputed_traumabase))
 
-observed.covariates <- c("age", "Glasgow.initial", 'systolicBloodPressure', "sexe", "pupilReact_num")
+observed.covariates <- c("age", "Glasgow.initial", 'systolicBloodPressure', "gender", "pupilReact_num")
 covariates <- c(observed.covariates, "time_to_treatment")
 
 CRASH3_tbionly <- CRASH3_tbionly[, c(observed.covariates, "Y", "A", "S")]
@@ -310,9 +302,7 @@ imputed_traumabase <- imputed_traumabase[, c(observed.covariates, "Y", "A", "S")
 total <- rbind(CRASH3_tbionly, imputed_traumabase)
 
 rownames(total) <- 1:nrow(total)
-
 ```
-
 
 
 ```{r}
@@ -320,18 +310,8 @@ colnames(total)[which(names(total) == "systolicBloodPressure")] <- "blood"
 colnames(total)[which(names(total) == "pupilReact_num")] <- "pupil"
 colnames(total)[which(names(total) == "Glasgow.initial")] <- "glasgow"
 
-observed.covariates <- c("age", "glasgow", 'blood', "sexe", "pupil")
+observed.covariates <- c("age", "glasgow", 'blood', "gender", "pupil")
 covariates <- c(observed.covariates, "time_to_treatment")
-```
-
-
-```{r}
-# keep only the mild and moderate patient
-if (SCENARIO_1){
-  print(nrow(total))
-  total <- total[which((total$S == 1 & total$glasgow > 8 & total$Y < 30) | (total$S == 0 & total$glasgow > 8)),]
-  print(nrow(total))
-}
 ```
 
 ```{r}
@@ -346,7 +326,7 @@ table(total$S)
 ```{r}
 t.test(total[total$S ==1 & total$A == 1, "Y"], total[total$S ==1 & total$A == 0, "Y"])
 ```
-We can conclude on no treatment effect.
+We cannot conclude on a treatment effect.
 
 ## Assumptions
 
@@ -545,8 +525,8 @@ for (covariate in observed.covariates){
 
 ```{r}
 # initialization parameters for the heat map
-shifts <- seq(-1, 1, by = 0.05)
-deltas <- seq(-0.15, 0.3,by = 0.05) 
+shifts <- seq(-0.80, 0.60, by = 0.005)
+deltas <- seq(-0.15, 0.25,by = 0.005) 
 
 n = nrow(total_substudy[total_substudy$S == 1,])
 m = nrow(total_substudy[total_substudy$S == 0,])
@@ -561,20 +541,21 @@ heatmap_data$bias <- heatmap_data$shift*heatmap_data$delta
 
 ```{r}
 library(ggrepel)
-ggplot(data = hat_deltas_with_CI,
+ggplot(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",],
              aes(x = shift,
                  y = delta,
                  label = covariate)) + 
   geom_contour_filled(data = heatmap_data, aes(x = shift, y = delta, z = -bias)) +
   theme_bw() +
-  geom_pointrange(data = hat_deltas_with_CI, aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.3) +
-  geom_pointrange(data = hat_deltas_with_CI, aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.3) +
-  geom_label_repel(data = hat_deltas_with_CI, aes(x = shift, y = delta, label = covariate), size = 5.5) +
+  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",], aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.3) +
+  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",], aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.3) +
+  geom_label_repel(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",], aes(x = shift, y = delta, label = covariate), size = 5.5) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
   xlab(expression(Normalized~shift~paste("(",Delta[mis],")"))) +
   ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
         axis.title=element_text(size=20,face="bold"))  +
+  geom_vline(xintercept = -0.75, linetype = "dashed", alpha = 0.8) +
   guides(fill = guide_legend(title.position = "right",direction = "vertical",
                                title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
@@ -583,7 +564,8 @@ ggplot(data = hat_deltas_with_CI,
   ggsave("./austen-plot-traumabase.pdf")
   
 ```
-`
+This is how the shift can be interpreted:
+
 ```{r}
 shift = mean(total[total$S  == 0 , "glasgow"] - total[total$S  == 1 , "glasgow"] )
 sd = sd(total[total$S  == 1 , "glasgow"])

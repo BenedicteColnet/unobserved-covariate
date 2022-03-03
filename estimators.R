@@ -3,7 +3,7 @@ compute_mean_diff_RCT <- function(DF){
   return(RCT_ATE)
 }
 
-compute_ipsw <- function(DF, normalized = FALSE, estimation = "logit"){
+compute_ipsw <- function(DF, normalized = FALSE){
   
   N <- nrow(DF)
   n <- nrow(DF[DF$S ==1, ])
@@ -11,23 +11,9 @@ compute_ipsw <- function(DF, normalized = FALSE, estimation = "logit"){
   
   temp <- DF
   
-  # Estimation of P(V = 1 | X)
-  # p <-- P(V = 1 | X) 
-  
-  if (estimation == "logit"){
-    
-    # with logistic regression
-    p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
-    p <- predict(p.fit, type = "response", newdata = temp)
-    
-  } 
-  else if (estimation == "forest") {
-    break
-  } 
-  else {
-    print("Estimation parameter should be forest or logit.")
-    break
-  }
+  # with logistic regression by default
+  p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
+  p <- predict(p.fit, type = "response", newdata = temp)
   
   # Store odds
   temp$odds <- ((1 - p)/p)
@@ -93,8 +79,6 @@ compute_aipsw <- function(DF, normalized = FALSE) {
   tau_gformula <- mean(mu_1_predict) - mean(mu_0_predict)
   
   ### IPSW part
-  # Estimation of P(V = 1 | X)
-  # p <-- P(V = 1 | X) 
   # with logistic regression
   p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
   p <- predict(p.fit, type = "response", newdata = temp)
@@ -109,13 +93,16 @@ compute_aipsw <- function(DF, normalized = FALSE) {
   temp$mu_10 <- predict.lm(mu_0, newdata = temp[, !names(temp) %in% c("S", "A")])
   
   if (normalized == FALSE){
-    tau_ipsw <- (2/m)*with(temp, sum(odds*A*(Y - mu_11) - odds*(1-A)*(Y - mu_10)))  
+    tau_ipsw_residuals <- (2/m)*with(temp, sum(odds*A*(Y - mu_11) - odds*(1-A)*(Y - mu_10))) 
+    tau_ipsw <- (2/m)*with(temp, sum(odds*A*Y - odds*(1-A)*Y))
   } else {
-    tau_ipsw <- with(temp, sum(odds*A*(Y - mu_11)/sum(odds*A) - odds*(1-A)*(Y - mu_10)/sum(odds*(1-A))))
+    tau_ipsw_residuals <- with(temp, sum(odds*A*(Y - mu_11)/sum(odds*A) - odds*(1-A)*(Y - mu_10)/sum(odds*(1-A))))
+    tau_ipsw <- with(temp, sum(odds*A*Y/sum(odds*A) - odds*(1-A)*Y/sum(odds*(1-A))))
   }
   
-  tau_aipsw <- tau_ipsw + tau_gformula
-  return(tau_aipsw)
+  tau_aipsw <- tau_ipsw_residuals + tau_gformula
+
+  return(c("ipsw" = tau_ipsw, "g.formula" = tau_gformula, "aipsw" = tau_aipsw))
 }
 
 
