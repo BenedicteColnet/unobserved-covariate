@@ -3,11 +3,74 @@ compute_mean_diff_RCT <- function(DF){
   return(RCT_ATE)
 }
 
+estimate_tau_parametric <- function(DF, estimator = "all"){
+  
+  # extract sample size
+  N <- nrow(DF)
+  n <- nrow(DF[DF$S ==1, ])
+  m <- nrow(DF[DF$S ==0, ])
+  
+  temp <- DF
+  
+  if (estimator %in% c("all", "ipsw", "aipsw")){
+    
+    # estimate weights with logistic regression by default
+    p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
+    p <- predict(p.fit, type = "response", newdata = temp)
+    
+    # Store odds
+    temp$odds <- ((1 - p)/p)
+    
+    # Keep only RCT for the rest of the calculus
+    RCT <- temp[temp$S == 1,]
+    
+    tau_hat_ipsw <- (2/m)*with(RCT, sum(odds*A*Y - odds*(1-A)*Y))  
+    
+    if (estimator == "ipsw"){
+      return(tau_hat_ipsw)
+      break
+    }
+  }
+  
+  if (estimator %in% c("all", "g.formula", "aipsw")){
+    
+    # carefull, only for continuous Y 
+    mu_1 <- lm(Y ~., data = temp[temp$S == 1 & temp$A == 1, !names(temp) %in% c("S", "A")])
+    mu_0 <- lm(Y ~., data = temp[temp$S == 1 & temp$A == 0, !names(temp) %in% c("S", "A")])
+    
+    mu_1_predict <- predict.lm(mu_1, newdata = temp[temp$S == 0, !names(temp) %in% c("S", "A")])
+    mu_0_predict <- predict.lm(mu_0, newdata = temp[temp$S == 0, !names(temp) %in% c("S", "A")])
+    
+    tau_hat_gformula <- mean(mu_1_predict) - mean(mu_0_predict)
+    
+    if (estimator == "g.formula"){
+      return(tau_hat_gformula)
+      break
+    }
+  }
+  
+  # cross-fitting skipped because parametric
+  RCT$mu_11 <- predict.lm(mu_1, newdata = RCT[, !names(RCT) %in% c("S", "A")])
+  RCT$mu_10 <- predict.lm(mu_0, newdata = RCT[, !names(RCT) %in% c("S", "A")])
+  tau_ipsw_mu <- (2/m)*with(RCT, sum(odds*A*mu_11 - odds*(1-A)*mu_10)) 
+  
+  tau_hat_aipsw <- tau_hat_ipsw - tau_ipsw_mu + tau_hat_gformula
+  
+  if (estimator == "aipsw"){
+    return(tau_hat_aipsw)
+    break
+  } else {
+    return(list("ipsw" = tau_hat_ipsw, "g.formula" = tau_hat_gformula, "aipsw" = tau_hat_aipsw))
+  }
+}
+
 compute_ipsw <- function(DF, normalized = FALSE){
+  
   
   N <- nrow(DF)
   n <- nrow(DF[DF$S ==1, ])
   m <- nrow(DF[DF$S ==0, ])
+  
   
   temp <- DF
   
@@ -101,17 +164,19 @@ compute_aipsw <- function(DF, normalized = FALSE) {
   }
   
   tau_aipsw <- tau_ipsw_residuals + tau_gformula
-
-  return(c("ipsw" = tau_ipsw, "g.formula" = tau_gformula, "aipsw" = tau_aipsw))
+  
+  return(tau_aipsw)
 }
 
-
-get_coefficients_with_Robinson_proc <- function(data, learning_m = "forest", covariate_names = covariate_names, ratio = 0.5, print_information_on_coefficients = FALSE){
+get_coefficients_with_Robinson_proc <- function(data, learning_m = "forest", covariate_names = covariate_names, print_information_on_coefficients = FALSE){
   
   # focus on RCT only
   temp <- data[data$S == 1, c(covariate_names, "Y", "A")]
   
-  # learn E[Y|X] while choosing best hyperparameters if needed
+  # estimate the ratio in the RCT
+  ratio = mean(temp$A)
+  
+  # learn E[Y|X] while choosing best hyperparameters if needed (e.g. random forests)
   if (learning_m == "linear"){
     
     hat_m <- lm(Y~., data = temp[, !names(temp) %in% c("S", "A")])
@@ -119,7 +184,8 @@ get_coefficients_with_Robinson_proc <- function(data, learning_m = "forest", cov
     
   } else if (learning_m == "forest"){
     
-    # regression_forest performs hyperparameters selection if "all". Here "none" for faster computation
+    # regression_forest performs hyperparameters selection if "all". 
+    # here "none" for faster computation
     hat_m = regression_forest(temp[, covariate_names], temp[, "Y"], tune.parameters =  "none")
     
     # do not put newdata - so that out of bag sample is taken for forest

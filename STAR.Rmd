@@ -179,22 +179,24 @@ boxM(star[, c("age", "gkfreelunch","g1freelunch")], group = star$S)
 ```
 
 ```{r}
-# Filter treatment / control observations, pulls outcome variable as a vector
-y_treated_RCT <- RCT[RCT$A == 1, "Y"] 
-y_control_RCT <- RCT[RCT$A == 0, "Y"] 
-  
-n_treated_RCT <- nrow(RCT[RCT$A == 1,]) 
-n_control_RCT <- nrow(RCT[RCT$A == 0,]) 
-  
-# Difference in means
-estimated_difference <- mean(y_treated_RCT) - mean(y_control_RCT)
-  
-# 95% Confidence intervals
-se_hat <- sqrt(var(y_treated_RCT)/(n_treated_RCT-1) + var(y_control_RCT)/(n_control_RCT-1) )
-lower_ci <- estimated_difference - 1.96 * se_hat
-upper_ci <- estimated_difference + 1.96 * se_hat
-  
-TAU1 = c(Difference = estimated_difference, CI_inf = lower_ci, CI_sup = upper_ci)
+# # Filter treatment / control observations, pulls outcome variable as a vector
+# y_treated_RCT <- RCT[RCT$A == 1, "Y"] 
+# y_control_RCT <- RCT[RCT$A == 0, "Y"] 
+#   
+# n_treated_RCT <- nrow(RCT[RCT$A == 1,]) 
+# n_control_RCT <- nrow(RCT[RCT$A == 0,]) 
+#   
+# # Difference in means
+# estimated_difference <- mean(y_treated_RCT) - mean(y_control_RCT)
+#   
+# # 95% Confidence intervals
+# se_hat <- sqrt(var(y_treated_RCT)/(n_treated_RCT-1) + var(y_control_RCT)/(n_control_RCT-1) )
+# lower_ci <- estimated_difference - 1.96 * se_hat
+# upper_ci <- estimated_difference + 1.96 * se_hat
+
+t.test.RCT <- t.test(RCT[RCT$A == 1, "Y"], RCT[RCT$A == 0, "Y"])
+
+TAU1 = c(Difference = t.test.RCT$estimate[1]-t.test.RCT$estimate[2], CI_inf = t.test.RCT$conf.int[1], CI_sup = t.test.RCT$conf.int[2])
 TAU1
 ```
 
@@ -202,7 +204,7 @@ TAU1
 The confidence intervals are estimated via non-parametric stratified bootstrap.
 
 ```{r, echo=T}
-stratified_bootstrap <- function(DF, nboot = 500){
+stratified_bootstrap <- function(DF, nboot = 500, estimator = "g.formula"){
   
   estimands <- c()
   
@@ -220,21 +222,28 @@ stratified_bootstrap <- function(DF, nboot = 500){
     RCT_RWD <- rbind(DF[which(DF$S==1),][index_RCT,],
                      DF[which(DF$S==0),][index_RWD,])
     # estimation
-    estimands <- c(estimands, compute_gformula(RCT_RWD))
+    if (estimator == "g.formula"){
+      estimands <- c(estimands, compute_gformula(RCT_RWD))
+    } else if (estimator == "ipsw"){
+      estimands <- c(estimands, compute_ipsw(RCT_RWD))
+    } else if (estimator == "aipsw"){
+      estimands <- c(estimands, compute_aipsw(RCT_RWD))
+    } else { break }
+    
   }
   return(estimands)
 }
 
-ate <- compute_gformula_with_Random_forest(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
-bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "g.formula")
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
 GENERALIZED_ATE_all_cov = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
 GENERALIZED_ATE_all_cov
 
-ate <- compute_gformula_with_Random_forest(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
-bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch",  "S", "Y", "A")])
+ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch",  "S", "Y", "A")], estimator = "g.formula")
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
@@ -242,14 +251,93 @@ GENERALIZED_ATE_miss_g1surban = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI
 GENERALIZED_ATE_miss_g1surban
 
 
-ate <- compute_gformula_with_Random_forest(star[, c("gender", "race", "S", "Y", "A")])
-bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "S", "Y", "A")])
+ate <- compute_gformula(star[, c("gender", "race", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "S", "Y", "A")], estimator = "g.formula")
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
 GENERALIZED_ATE_only_gender = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
 GENERALIZED_ATE_only_gender
 ```
+
+
+```{r}
+compute_ipsw <- function(DF){
+  
+  N <- nrow(DF)
+  n <- nrow(DF[DF$S ==1, ])
+  m <- nrow(DF[DF$S ==0, ])
+  e1.hat <- mean(DF[DF$S ==1, "A"])
+  
+  temp <- DF
+  
+  # with logistic regression by default
+  p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
+  p <- predict(p.fit, type = "response", newdata = temp)
+
+
+  # Store odds
+  temp$odds <- (1-p)/p
+  
+  # Keep only RCT for the rest of the calculus
+  rct <- temp[temp$S == 1,]
+  scores <- (n/m)*rct$Y*rct$odds*( (rct$A/e1.hat) - ((1-rct$A)/(1-e1.hat)) ) 
+  tau_ipsw <- mean(scores)
+  se <- sd(scores)/sqrt(n)
+  
+  return(c("estimate" = tau_ipsw, "se" = se))
+}
+compute_ipsw(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+
+```
+
+```{r}
+compute_aipsw <- function(DF){
+  
+  N <- nrow(DF)
+  n <- nrow(DF[DF$S ==1, ])
+  m <- nrow(DF[DF$S ==0, ])
+  e1.hat <- mean(DF[DF$S ==1, "A"])
+  
+  temp <- DF
+  
+  # with logistic regression by default
+  # p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
+  # p <- predict(p.fit, type = "response", newdata = temp)
+  propensity.model <- probability_forest(temp[, !names(temp) %in% c("A", "Y", "S")],
+                                         as.factor(temp$S),
+                                         num.trees = 500,
+                                         min.node.size = 5)
+  p <- predict(propensity.model, data = X_t)$predictions[,2]
+  
+  mu_1 <- lm(Y ~., data = temp[temp$S == 1 & temp$A == 1, !names(temp) %in% c("S", "A")])
+  mu_0 <- lm(Y ~., data = temp[temp$S == 1 & temp$A == 0, !names(temp) %in% c("S", "A")])
+    
+  temp$mu_1_predict <- predict.lm(mu_1, newdata = temp[, !names(temp) %in% c("S", "A")])
+  temp$mu_0_predict <- predict.lm(mu_0, newdata = temp[, !names(temp) %in% c("S", "A")])
+
+  # Store odds
+  temp$odds <- (1-p)/p
+  
+  # Keep only RCT for the rest of the calculus
+  scores <- (n/m)*temp$odds*temp$S*( ((temp$Y - temp$mu_1_predict)*temp$A/e1.hat) - ((1-(temp$Y - temp$mu_1_predict)*temp$A)/(1-e1.hat)) ) + (1-temp$S)*(temp$mu_1_predict-temp$mu_0_predict)
+  tau_aipsw <- mean(scores)
+  se <- sd(scores)/sqrt(n)
+  
+  return(tau_aipsw)
+  #return(c("estimate" = tau_aipsw, "se" = se))
+}
+
+ate <- compute_aipsw(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "aipsw")
+bootstrap_sorted <- sort(bootstrap)
+CI_inf <- quantile(bootstrap_sorted, 0.025)
+CI_sup <- quantile(bootstrap_sorted, 0.975)
+GENERALIZED_ATE_all_cov = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
+GENERALIZED_ATE_all_cov
+```
+
+
 
 ```{r}
 results <- rbind(GROUND_TRUTH, TAU1, GENERALIZED_ATE_all_cov, GENERALIZED_ATE_miss_g1surban)
@@ -343,21 +431,23 @@ imputation.model <- lm(g1surban ~ gender + race + age + gkfreelunch + g1freelunc
 # impute on RCT
 imputed_rct <- star[star$S == 1,]
 imputed_rct$g1surban <- predict(imputation.model, newdata = star[star$S == 1,])
+# remove the shift
+imputed_rct$g1surban <- imputed_rct$g1surban - true_shift
 
 # extract coefficient on the imputed RCT
 data.driven.deltas = get_coefficients_with_Robinson_proc(imputed_rct, 
                                              learning_m = "linear", 
                                              covariate_names = c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban"), 
-                                             print_information_on_cefficients = TRUE)
+                                             print_information_on_coefficients = TRUE)
 
 data.driven.delta <- data.driven.deltas["g1surban"]
 ```
-This empirical method allows to get the coefficient being 11 with a standard error of 4.5.
+This empirical method allows to get the coefficient being 11 with a standard error of 5.4
 
 ```{r}
 # initialization parameters for the heat map
-shifts <- seq(0, 1, by = 0.05)
-deltas <- seq(-15, 17, by = 1) 
+shifts <- seq(-1, 1, by = 0.01)
+deltas <- seq(-15, 20, by = 0.2) 
 
 # generate a data set
 empirical_sigma = cor(star[star$S == 0, c(variables, missing_covariate)])
@@ -378,12 +468,12 @@ BIAS = results[results$names == "GENERALIZED_ATE_miss_g1surban", "Difference"] -
 ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) + 
   geom_contour_filled() +
   stat_contour(breaks = BIAS, size = 0.8, color = "red") +
-  theme_classic() + 
+  theme_minimal() + 
   geom_point(x = true_shift,
                  y = data.driven.delta,
                  size = 3, shape = 3) +
-  geom_hline(yintercept = data.driven.delta-4, linetype = "dashed") +
-  geom_hline(yintercept = data.driven.delta+4, linetype = "dashed") +
+  geom_hline(yintercept = data.driven.delta-(5.4/2), linetype = "dashed") +
+  geom_hline(yintercept = data.driven.delta+(5.4/2), linetype = "dashed") +
   geom_vline(xintercept = 0.66, linetype = "dashed") + # based on t-test
   geom_vline(xintercept = 0.43, linetype = "dashed") + # based on t-test
    scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
@@ -392,7 +482,7 @@ ggplot(heatmap_data, aes(x = shift, y = delta, z = bias)) +
     theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size=20)) +
    guides(fill = guide_legend(title.position = "right",direction = "vertical",
                                title.theme = element_text(angle = 90, size = 12, colour = "black"), barheight = .5, barwidth = .95, title.hjust = 0.5, raster = FALSE, title = expression(Bias~" "~hat(tau)[G[obs]]-tau))) 
-  ggsave("./figures/star-heatmap.pdf")
+  ggsave("./figures/star-heatmap.png")
 ```
 
 

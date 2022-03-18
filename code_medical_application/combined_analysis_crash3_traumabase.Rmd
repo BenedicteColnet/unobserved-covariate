@@ -171,6 +171,8 @@ imputed_traumabase <- df.imp.mice[[1]]
 # imputed_traumabase$A <- rep(NA, nrow(imputed_traumabase))
 # imputed_traumabase$time_to_treatment <- rep(NA, nrow(imputed_traumabase))
 
+names(imputed_traumabase)[names(imputed_traumabase) == "sexe"] <- "gender"
+
 print(paste0("Raw traumabase data contains following number of observations: ", nrow(imputed_traumabase)))
 ```
 
@@ -222,7 +224,7 @@ CRASH3$Glasgow.initial <- as.numeric(substring(CRASH3$gcsEyeOpening, 1, 1)) +
                                  as.numeric(substring(CRASH3$gcsVerbalResponse, 1, 1))
  
 # Women (1) and men (0)
-CRASH3$sexe <- ifelse(CRASH3$sex == "Female", 1, 0)
+CRASH3$gender <- ifelse(CRASH3$sex == "Female", 1, 0)
 
 # Pupil reactivity
 CRASH3$pupilReact_num <- case_when(CRASH3$pupilReact == "Both React" ~ 2,
@@ -316,6 +318,37 @@ covariates <- c(observed.covariates, "time_to_treatment")
 
 ```{r}
 table(total$S)
+```
+
+
+# Plots to observe the covariate shift
+
+```{r}
+for.plot <- total
+for.plot$Source <- ifelse(total$S == 1, "CRASH-3", "Traumabase")
+ggplot(for.plot, aes(x = age, group = Source, fill = Source)) +
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  xlab("Age (years)") +
+  ylab("") + 
+  theme(legend.position="top") + 
+  scale_fill_manual(values=c("#E90DC1", "#33C6F0")) +
+  theme(axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+ggsave("./distributional_shift.png", width = 8, height = 3)
+```
+
+```{r}
+ggplot(for.plot, aes(x = glasgow, group = Source, fill = Source)) +
+  #geom_density(alpha = 0.5) +
+  geom_bar(aes(y = (..count..)/sum(..count..)), position = "dodge", alpha = 0.5) + 
+  scale_y_continuous(labels=scales::percent) +
+  ylab("Relative frequencies") +
+  theme_minimal() +
+  xlab("Glasgow score") +
+  scale_fill_manual(values=c("#E90DC1", "#33C6F0")) +
+  theme(legend.position="top") 
+ggsave("./distributional_shift_glasgow.png", width = 8, height = 3)
 ```
 
 
