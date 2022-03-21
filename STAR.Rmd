@@ -204,7 +204,7 @@ TAU1
 The confidence intervals are estimated via non-parametric stratified bootstrap.
 
 ```{r, echo=T}
-stratified_bootstrap <- function(DF, nboot = 500, estimator = "g.formula"){
+stratified_bootstrap <- function(DF, nboot = 1000, estimator = "g.formula"){
   
   estimands <- c()
   
@@ -223,18 +223,21 @@ stratified_bootstrap <- function(DF, nboot = 500, estimator = "g.formula"){
                      DF[which(DF$S==0),][index_RWD,])
     # estimation
     if (estimator == "g.formula"){
-      estimands <- c(estimands, compute_gformula(RCT_RWD))
+      estimands <- c(estimands, estimate_tau_parametric(DF = RCT_RWD, estimator = "g.formula"))
     } else if (estimator == "ipsw"){
-      estimands <- c(estimands, compute_ipsw(RCT_RWD))
+      estimands <- c(estimands, estimate_tau_parametric(DF = RCT_RWD, estimator = "ipsw"))
     } else if (estimator == "aipsw"){
-      estimands <- c(estimands, compute_aipsw(RCT_RWD))
+      estimands <- c(estimands, estimate_tau_parametric(DF = RCT_RWD, estimator = "aipsw"))
     } else { break }
     
   }
   return(estimands)
 }
 
-ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
+
+print("G-formula")
+
+ate <- estimate_tau_parametric(DF = star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "g.formula")
 bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "g.formula")
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
@@ -242,7 +245,7 @@ CI_sup <- quantile(bootstrap_sorted, 0.975)
 GENERALIZED_ATE_all_cov = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
 GENERALIZED_ATE_all_cov
 
-ate <- compute_gformula(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")])
+ate <- estimate_tau_parametric(DF = star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")], estimator = "g.formula")
 bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch",  "S", "Y", "A")], estimator = "g.formula")
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
@@ -251,107 +254,50 @@ GENERALIZED_ATE_miss_g1surban = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI
 GENERALIZED_ATE_miss_g1surban
 
 
-ate <- compute_gformula(star[, c("gender", "race", "S", "Y", "A")])
-bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "S", "Y", "A")], estimator = "g.formula")
+print("AIPSW")
+
+ate.aipsw <- estimate_tau_parametric(DF = star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "aipsw")
+bootstrap.aipsw <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "aipsw")
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
-GENERALIZED_ATE_only_gender = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
-GENERALIZED_ATE_only_gender
-```
+GENERALIZED_ATE_all_cov_AIPSW = c(Difference = ate.aipsw, CI_inf = CI_inf, CI_sup = CI_sup)
+GENERALIZED_ATE_all_cov_AIPSW
 
-
-```{r}
-compute_ipsw <- function(DF){
-  
-  N <- nrow(DF)
-  n <- nrow(DF[DF$S ==1, ])
-  m <- nrow(DF[DF$S ==0, ])
-  e1.hat <- mean(DF[DF$S ==1, "A"])
-  
-  temp <- DF
-  
-  # with logistic regression by default
-  p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
-  p <- predict(p.fit, type = "response", newdata = temp)
-
-
-  # Store odds
-  temp$odds <- (1-p)/p
-  
-  # Keep only RCT for the rest of the calculus
-  rct <- temp[temp$S == 1,]
-  scores <- (n/m)*rct$Y*rct$odds*( (rct$A/e1.hat) - ((1-rct$A)/(1-e1.hat)) ) 
-  tau_ipsw <- mean(scores)
-  se <- sd(scores)/sqrt(n)
-  
-  return(c("estimate" = tau_ipsw, "se" = se))
-}
-compute_ipsw(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
-
-```
-
-```{r}
-compute_aipsw <- function(DF){
-  
-  N <- nrow(DF)
-  n <- nrow(DF[DF$S ==1, ])
-  m <- nrow(DF[DF$S ==0, ])
-  e1.hat <- mean(DF[DF$S ==1, "A"])
-  
-  temp <- DF
-  
-  # with logistic regression by default
-  # p.fit  <- glm(S ~., family = binomial("logit"), data = temp[, !names(temp) %in% c("A", "Y")])
-  # p <- predict(p.fit, type = "response", newdata = temp)
-  propensity.model <- probability_forest(temp[, !names(temp) %in% c("A", "Y", "S")],
-                                         as.factor(temp$S),
-                                         num.trees = 500,
-                                         min.node.size = 5)
-  p <- predict(propensity.model, data = X_t)$predictions[,2]
-  
-  mu_1 <- lm(Y ~., data = temp[temp$S == 1 & temp$A == 1, !names(temp) %in% c("S", "A")])
-  mu_0 <- lm(Y ~., data = temp[temp$S == 1 & temp$A == 0, !names(temp) %in% c("S", "A")])
-    
-  temp$mu_1_predict <- predict.lm(mu_1, newdata = temp[, !names(temp) %in% c("S", "A")])
-  temp$mu_0_predict <- predict.lm(mu_0, newdata = temp[, !names(temp) %in% c("S", "A")])
-
-  # Store odds
-  temp$odds <- (1-p)/p
-  
-  # Keep only RCT for the rest of the calculus
-  scores <- (n/m)*temp$odds*temp$S*( ((temp$Y - temp$mu_1_predict)*temp$A/e1.hat) - ((1-(temp$Y - temp$mu_1_predict)*temp$A)/(1-e1.hat)) ) + (1-temp$S)*(temp$mu_1_predict-temp$mu_0_predict)
-  tau_aipsw <- mean(scores)
-  se <- sd(scores)/sqrt(n)
-  
-  return(tau_aipsw)
-  #return(c("estimate" = tau_aipsw, "se" = se))
-}
-
-ate <- compute_aipsw(star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")])
-bootstrap <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "aipsw")
+ate.aipsw <- estimate_tau_parametric(DF = star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")], estimator = "aipsw")
+bootstrap.aipsw <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch",  "S", "Y", "A")], estimator = "aipsw")
 bootstrap_sorted <- sort(bootstrap)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
-GENERALIZED_ATE_all_cov = c(Difference = ate, CI_inf = CI_inf, CI_sup = CI_sup)
-GENERALIZED_ATE_all_cov
+GENERALIZED_ATE_miss_g1surban_AIPSW = c(Difference = ate.aipsw, CI_inf = CI_inf, CI_sup = CI_sup)
+GENERALIZED_ATE_miss_g1surban_AIPSW
+
 ```
 
 
 
+
 ```{r}
-results <- rbind(GROUND_TRUTH, TAU1, GENERALIZED_ATE_all_cov, GENERALIZED_ATE_miss_g1surban)
+results <- rbind(GROUND_TRUTH, TAU1, GENERALIZED_ATE_all_cov, GENERALIZED_ATE_all_cov_AIPSW, GENERALIZED_ATE_miss_g1surban, GENERALIZED_ATE_miss_g1surban_AIPSW)
 results <- data.frame(names = row.names(results), results)
 results$names <- factor(results$names,
-                        levels = c("GROUND_TRUTH", "TAU1", "GENERALIZED_ATE_all_cov", "GENERALIZED_ATE_miss_g1surban"))
+                        levels = c("GROUND_TRUTH", "TAU1", "GENERALIZED_ATE_all_cov", "GENERALIZED_ATE_all_cov_AIPSW", "GENERALIZED_ATE_miss_g1surban", "GENERALIZED_ATE_miss_g1surban_AIPSW"))
 ```
 
 
 ```{r}
 results$names_recoded = case_when(results$names == "GROUND_TRUTH" ~ "STAR RCT",
                                   results$names == "TAU1" ~ "Biaised RCT",
-                                  results$names == "GENERALIZED_ATE_all_cov" ~"Generalized ATE \n (all covariates)",
-                                  results$names == "GENERALIZED_ATE_miss_g1surban" ~ "Generalized ATE \n (without g1surban)")
+                                  results$names == "GENERALIZED_ATE_all_cov" ~"G-formula \n (all covariates)",
+                                  results$names == "GENERALIZED_ATE_all_cov_AIPSW" ~"AIPSW \n (all covariates)",
+                                  results$names == "GENERALIZED_ATE_miss_g1surban" ~ "G-formula \n (without g1surban)",
+                                  results$names == "GENERALIZED_ATE_miss_g1surban_AIPSW" ~ "AIPSW \n (without g1surban)")
+
+
+results$names_recoded <- factor(results$names_recoded,
+                        levels = c("AIPSW \n (without g1surban)", "G-formula \n (without g1surban)",
+                                   "AIPSW \n (all covariates)", "G-formula \n (all covariates)",
+                                   "Biaised RCT", "STAR RCT"))
 
 ggplot(results, aes(x=names_recoded, y=Difference)) + 
   geom_point(size = 2)+
@@ -363,7 +309,7 @@ ggplot(results, aes(x=names_recoded, y=Difference)) +
   xlab("") +
   ylab("Estimated ATE") + 
   annotate(x=+Inf,y=GROUND_TRUTH["Difference"],label="Ground truth",vjust=1, geom="label", color = "red")
-  ggsave("./figures/bilan_star.pdf", width = 4, height = 2.5)
+  ggsave("./figures/bilan_star.pdf", width = 4, height = 4)
 ```
 
 Is the bias close to the one expected in Lemma 4?

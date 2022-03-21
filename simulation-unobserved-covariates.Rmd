@@ -30,6 +30,7 @@ library(rpart)
 library(ggrepel) # austen plot
 library(metR)
 library(heplots) # variance covariance tests + viz
+library(grf)
 
 # Load methods from estimators.R 
 source("./estimators.R")
@@ -557,7 +558,7 @@ xlab(expression(Shift~paste("(",Delta[m],")"))) +
                                title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~hat(tau)[G[obs]]-tau)))
+                               title = expression(Bias~" "~hat(tau)[obs]-tau)))
   ggsave("./figures/totally-missing-linear.pdf")
   
 ```
@@ -632,7 +633,7 @@ compute_bias_from_shift_and_delta <- function(shift, delta, data, sigma, missing
   delta_obs <- expected_values_RWE[obs] - expected_values_RCT[obs]
   
   # bias formula according to paper
-  bias = delta*(shift - sigma_mis_obs %*% inv(sigma_obs_obs) %*% delta_obs)
+  bias = -delta*(shift - sigma_mis_obs %*% inv(sigma_obs_obs) %*% delta_obs)
   return(bias)
 }
 
@@ -747,7 +748,7 @@ ggplot(final_data[final_data$missing_variable != "X5", ], aes(x = shift, y = del
   #stat_contour() +
   theme_classic() + 
   geom_contour_filled() +
-  stat_contour(breaks = 5) + 
+  stat_contour(breaks = -6) + 
   #geom_hline(yintercept=30) + 
   #geom_vline(xintercept = 0.2) +
   facet_grid(~missing_variable) +
@@ -769,7 +770,7 @@ ggplot(final_data[final_data$missing_variable != "X5", ], aes(x = shift, y = del
                                title.theme = element_text(angle = 90, size = 18, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
-                               title = expression(Bias~" "~tau-hat(tau)[G[obs]])))
+                               title = expression(Bias~" "~hat(tau)[obs]-tau)))
   ggsave("./figures/sensitivity_missing_rct.pdf", width = 10, height = 4)
 ```
 
