@@ -23,8 +23,8 @@ estimate_tau_parametric <- function(DF, estimator = "all"){
     
     # Keep only RCT for the rest of the calculus
     RCT <- temp[temp$S == 1,]
-    
-    tau_hat_ipsw <- (2/m)*with(RCT, sum(odds*A*Y - odds*(1-A)*Y))  
+
+    tau_hat_ipsw <- (1/m)*with(RCT, sum(odds*A*Y/0.5 - odds*(1-A)*Y/0.5))  
     
     if (estimator == "ipsw"){
       return(tau_hat_ipsw)

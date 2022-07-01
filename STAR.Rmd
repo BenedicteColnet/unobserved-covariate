@@ -258,7 +258,7 @@ print("AIPSW")
 
 ate.aipsw <- estimate_tau_parametric(DF = star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "aipsw")
 bootstrap.aipsw <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch", "g1surban", "S", "Y", "A")], estimator = "aipsw")
-bootstrap_sorted <- sort(bootstrap)
+bootstrap_sorted <- sort(bootstrap.aipsw)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
 GENERALIZED_ATE_all_cov_AIPSW = c(Difference = ate.aipsw, CI_inf = CI_inf, CI_sup = CI_sup)
@@ -266,7 +266,7 @@ GENERALIZED_ATE_all_cov_AIPSW
 
 ate.aipsw <- estimate_tau_parametric(DF = star[, c("gender", "race", "g1freelunch", "gkfreelunch", "S", "Y", "A")], estimator = "aipsw")
 bootstrap.aipsw <- stratified_bootstrap(DF=star[, c("gender", "race", "g1freelunch", "gkfreelunch",  "S", "Y", "A")], estimator = "aipsw")
-bootstrap_sorted <- sort(bootstrap)
+bootstrap_sorted <- sort(bootstrap.aipsw)
 CI_inf <- quantile(bootstrap_sorted, 0.025)
 CI_sup <- quantile(bootstrap_sorted, 0.975)
 GENERALIZED_ATE_miss_g1surban_AIPSW = c(Difference = ate.aipsw, CI_inf = CI_inf, CI_sup = CI_sup)
