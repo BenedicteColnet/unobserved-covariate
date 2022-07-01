@@ -435,15 +435,18 @@ GENERALIZED_ATE_wo_time_to_treatment
 Sensitivity analysis when totally unobserved covariate
 
 ```{r}
-total_substudy <- total
+# Former analysis with variable scaling
 
-# variable scaling
-for (covariate in observed.covariates){
-  total_substudy[, covariate] <- as.numeric(total_substudy[, covariate])
-  sd_cov <- sd(total_substudy[, covariate], na.rm = T)
-  total_substudy[, covariate] <- total_substudy[, covariate] / sd_cov
-  total_substudy[, covariate] <- total_substudy[, covariate] - mean(total_substudy[total_substudy$S == 1, covariate], na.rm = T)
-}
+
+# total_substudy <- total
+# 
+# # variable scaling
+# for (covariate in observed.covariates){
+#   total_substudy[, covariate] <- as.numeric(total_substudy[, covariate])
+#   sd_cov <- sd(total_substudy[, covariate], na.rm = T)
+#   total_substudy[, covariate] <- total_substudy[, covariate] / sd_cov
+#   total_substudy[, covariate] <- total_substudy[, covariate] - mean(total_substudy[total_substudy$S == 1, covariate], na.rm = T)
+# }
 ```
 
 
@@ -496,11 +499,10 @@ get_coefficients_with_Robinson_proc <- function(data, learning_m = "forest", cov
   return(hat_CATE_linear_model)
 }
 
-hat_deltas = get_coefficients_with_Robinson_proc(total_substudy, 
+hat_deltas = get_coefficients_with_Robinson_proc(total, 
                                                  learning_m = "forest", 
                                                  covariate_names = observed.covariates)
 ```
-
 
 
 ```{r}
@@ -516,13 +518,13 @@ get_bootstraped_coeff_Robinson <- function(DF, nboot = 100, covariate_names = ob
     boot_RCT <- DF[which(DF$S==1),][index_RCT,]
     
     # estimation
-    init.result <- rbind(init.result, get_coefficients_with_Robinson_proc(total_substudy, learning_m = "forest", covariate_names = observed.covariates))
+    init.result <- rbind(init.result, get_coefficients_with_Robinson_proc(total, learning_m = "forest", covariate_names = observed.covariates))
   }
   return(init.result)
 }
 
 
-bootstrap <- get_bootstraped_coeff_Robinson(DF = total_substudy[, !names(total_substudy) %in% c("time_to_treatment")], 
+bootstrap <- get_bootstraped_coeff_Robinson(DF = total[, !names(total) %in% c("time_to_treatment")], 
                                             nboot = 100,
                                             init.result = data.frame(t(hat_deltas)))
 
@@ -537,10 +539,10 @@ hat_deltas_with_CI <- data.frame("delta" = c(),
 
 for (covariate in observed.covariates){
   
-  shift_estimate <- t.test(total_substudy[total_substudy$S == 0, covariate], total_substudy[total_substudy$S == 1, covariate], na.rm = TRUE)
+  shift_estimate <- t.test(total[total$S == 0, covariate], total[total$S == 1, covariate], na.rm = TRUE)
   shift_sup <- shift_estimate$conf.int[[2]]
   shift_inf <- shift_estimate$conf.int[[1]]
-  shift_for_this_variable <- mean(total_substudy[total_substudy$S == 0, covariate], na.rm = TRUE) - mean(total_substudy[total_substudy$S == 1, covariate], na.rm = TRUE)
+  shift_for_this_variable <- mean(total[total$S == 0, covariate], na.rm = TRUE) - mean(total[total$S == 1, covariate], na.rm = TRUE)
   
   
   sorted_boostrap <- sort(bootstrap[,covariate])
@@ -557,12 +559,17 @@ for (covariate in observed.covariates){
 
 
 ```{r}
-# initialization parameters for the heat map
-shifts <- seq(-0.80, 0.60, by = 0.005)
-deltas <- seq(-0.15, 0.25,by = 0.005) 
+hat_deltas_with_CI
+```
 
-n = nrow(total_substudy[total_substudy$S == 1,])
-m = nrow(total_substudy[total_substudy$S == 0,])
+
+```{r}
+# initialization parameters for the heat map
+shifts <- seq(-2, 4, by = 0.005)
+deltas <- seq(-0.03, 0.01,by = 0.005) 
+
+n = nrow(total[total$S == 1,])
+m = nrow(total[total$S == 0,])
 
 # generate grid for heatmap
 heatmap_data <- as.data.frame(expand.grid(shifts, deltas))
@@ -574,34 +581,78 @@ heatmap_data$bias <- heatmap_data$shift*heatmap_data$delta
 
 ```{r}
 library(ggrepel)
-ggplot(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",],
+ggplot(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "glasgow",],
              aes(x = shift,
                  y = delta,
                  label = covariate)) + 
   geom_contour_filled(data = heatmap_data, aes(x = shift, y = delta, z = -bias)) +
   theme_bw() +
-  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",], aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.3) +
-  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",], aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.3) +
-  geom_label_repel(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate != "gender",], aes(x = shift, y = delta, label = covariate), size = 5.5) +
+  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "glasgow",], aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.3) +
+  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "glasgow",], aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.3) +
+  geom_label_repel(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "glasgow",], aes(x = shift, y = delta, label = covariate), size = 5.5) +
   scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
-  xlab(expression(Normalized~shift~paste("(",Delta[mis],")"))) +
+  xlab(expression(Shift~paste("(",Delta[mis],")"))) +
   ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
         axis.title=element_text(size=20,face="bold"))  +
-  geom_vline(xintercept = -0.75, linetype = "dashed", alpha = 0.8) +
+  #geom_vline(xintercept = -0.75, linetype = "dashed", alpha = 0.8) +
   guides(fill = guide_legend(title.position = "right",direction = "vertical",
                                title.theme = element_text(angle = 90, size = 20, colour = "black"),
                                barheight = .5, barwidth = .95,
                                title.hjust = 0.5, raster = FALSE,
                                title = expression(Bias~" "~hat(tau)[G[obs]]-~tau)))
-  ggsave("./austen-plot-traumabase.pdf")
+  ggsave("./austen-plot-traumabase-glasgow.pdf")
   
 ```
-This is how the shift can be interpreted:
-
 ```{r}
-shift = mean(total[total$S  == 0 , "glasgow"] - total[total$S  == 1 , "glasgow"] )
-sd = sd(total[total$S  == 1 , "glasgow"])
-shift/sd
+# initialization parameters for the heat map
+shifts <- seq(-40, 10, by = 0.1)
+deltas <- seq(-0.01, 0.02, by = 0.0005) 
+
+n = nrow(total[total$S == 1,])
+m = nrow(total[total$S == 0,])
+
+# generate grid for heatmap
+heatmap_data <- as.data.frame(expand.grid(shifts, deltas))
+names(heatmap_data) <- c("shift", "delta")
+heatmap_data$bias <- heatmap_data$shift*heatmap_data$delta
 ```
 
+
+```{r}
+guessed.time.to.treatment <- data.frame("delta" = 0.1*1/20,
+                              "CI_inf_delta" = 0.1*1/40,
+                              "CI_sup_delta" = 0.1*1/10,
+                              "covariate" = "TTT",
+                               "shift" = -20,
+                               "CI_inf_shift" = -30,
+                               "CI_sup_shift" = -10)
+hat_deltas_with_CI <- rbind(hat_deltas_with_CI, guessed.time.to.treatment)
+```
+
+
+```{r}
+
+ggplot(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "TTT",],
+             aes(x = shift,
+                 y = delta,
+                 label = covariate)) + 
+  geom_contour_filled(data = heatmap_data, aes(x = shift, y = delta, z = -bias)) +
+  theme_bw() +
+  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "TTT",], aes(xmax = CI_sup_shift, xmin = CI_inf_shift), size = 0.3) +
+  geom_pointrange(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "TTT",], aes(ymax = CI_sup_delta, ymin = CI_inf_delta), size = 0.3) +
+  geom_label_repel(data = hat_deltas_with_CI[hat_deltas_with_CI$covariate == "TTT",], aes(x = shift, y = delta, label = covariate), size = 5.5) +
+  scale_fill_distiller(super = metR::ScaleDiscretised, palette = "Spectral") +
+  xlab(expression(Shift~paste("(",Delta[mis],")"))) +
+  ylab(expression(Influence~on~Y~paste("(",delta[mis],")"))) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        axis.title=element_text(size=20,face="bold"))  +
+  #geom_vline(xintercept = -0.75, linetype = "dashed", alpha = 0.8) +
+  guides(fill = guide_legend(title.position = "right",direction = "vertical",
+                               title.theme = element_text(angle = 90, size = 20, colour = "black"),
+                               barheight = .5, barwidth = .95,
+                               title.hjust = 0.5, raster = FALSE,
+                               title = expression(Bias~" "~hat(tau)[G[obs]]-~tau)))
+  ggsave("./austen-plot-traumabase-ttt.pdf")
+  
+```
